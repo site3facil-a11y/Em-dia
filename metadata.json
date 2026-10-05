@@ -1,0 +1,6 @@
+{
+  "name": "Contas a Pagar - SQLite",
+  "description": "Aplicativo completo para controle de contas a pagar, parcelamentos e agendamentos com banco de dados SQLite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
