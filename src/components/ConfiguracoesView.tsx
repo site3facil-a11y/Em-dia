@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { exportarArquivoSqlite, restaurarArquivoSqlite, popularDadosIniciais, limparBancoDeDados } from '../db/sqlite';
 import { gerarCsvParcelas } from '../db/repository';
+import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
+import { compararVersoes } from '../utils/versao';
 
 interface ConfiguracoesViewProps {
   darkMode: boolean;
@@ -47,10 +49,64 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [erro, setErro] = useState<string | null>(null);
   const [processando, setProcessando] = useState(false);
   const [copiadoComandos, setCopiadoComandos] = useState(false);
+  const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
+  const [modalAtualizacaoAberto, setModalAtualizacaoAberto] = useState(false);
+  const [releaseEncontrada, setReleaseEncontrada] = useState<ReleaseInfo | null>(null);
 
   const notificarSucesso = (msg: string) => {
     setMensagemSucesso(msg);
     setTimeout(() => setMensagemSucesso(null), 4000);
+  };
+
+  // Verificar Atualização no GitHub
+  const handleVerificarAtualizacao = async () => {
+    setErro(null);
+    setMensagemSucesso(null);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setErro('Sem conexão com a internet. Verifique sua rede e tente novamente.');
+      return;
+    }
+
+    try {
+      setVerificandoAtualizacao(true);
+      const res = await fetch('https://api.github.com/repos/site3facil-a11y/Em-dia/releases/latest', {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+
+      if (res.status === 403 || res.status === 429) {
+        setErro('Limite de consultas da API do GitHub excedido. Tente novamente mais tarde.');
+        return;
+      }
+
+      if (res.status === 404) {
+        setErro('Nenhuma versão de atualização encontrada no repositório.');
+        return;
+      }
+
+      if (!res.ok) {
+        setErro(`Não foi possível verificar atualizações no momento. (Erro HTTP ${res.status})`);
+        return;
+      }
+
+      const releaseData: ReleaseInfo = await res.json();
+      const tag = releaseData.tag_name || '';
+
+      const comparacao = compararVersoes(tag, __APP_VERSION__);
+      if (comparacao > 0) {
+        setReleaseEncontrada(releaseData);
+        setModalAtualizacaoAberto(true);
+      } else {
+        notificarSucesso('Você já está na versão mais recente');
+      }
+    } catch (err: any) {
+      console.error('Erro ao verificar atualização no GitHub:', err);
+      setErro('Não foi possível verificar atualizações. Verifique sua conexão com a internet.');
+    } finally {
+      setVerificandoAtualizacao(false);
+    }
   };
 
   // Backup do Arquivo .sqlite
@@ -168,6 +224,40 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
           <span>{erro}</span>
         </div>
       )}
+
+      {/* Atualização do App pelo GitHub */}
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
+              <RefreshCw className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Versão {__APP_VERSION__}
+                </h4>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  GitHub
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Repositório: <span className="font-mono font-medium text-slate-700 dark:text-slate-300">site3facil-a11y/Em-dia</span>
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleVerificarAtualizacao}
+            disabled={verificandoAtualizacao}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 active:scale-95 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all cursor-pointer disabled:opacity-50"
+            title="Consultar novas versões no GitHub"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${verificandoAtualizacao ? 'animate-spin' : ''}`} />
+            <span>{verificandoAtualizacao ? 'Verificando...' : 'Verificar atualização'}</span>
+          </button>
+        </div>
+      </div>
 
       {/* Card Porquinho de Economias (Metas Parceladas) */}
       <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-950 p-5 rounded-3xl border border-emerald-800/40 text-white shadow-lg space-y-3">
@@ -466,6 +556,14 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Modal de Atualização do GitHub */}
+      <ModalAtualizacao
+        aberto={modalAtualizacaoAberto}
+        onFechar={() => setModalAtualizacaoAberto(false)}
+        release={releaseEncontrada}
+        versaoAtual={__APP_VERSION__}
+      />
     </div>
   );
 };

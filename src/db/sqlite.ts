@@ -68,10 +68,10 @@ export async function carregarDoIndexedDB(): Promise<Uint8Array | null> {
 }
 
 /**
- * Cria a estrutura inicial das tabelas no SQLite
+ * Cria e atualiza a estrutura do banco usando PRAGMA user_version para migrações seguras
  */
 export function criarSchema(db: Database) {
-  // Habilita chaves estrangeiras
+  // Sempre garante chaves estrangeiras ativas
   db.run('PRAGMA foreign_keys = ON;');
 
   db.run(`
@@ -117,8 +117,23 @@ export function criarSchema(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_parcelas_conta ON parcelas(conta_id);
   `);
 
-  // Garante a existência exclusiva das 3 categorias essenciais
-  migrarParaTresCategorias(db);
+  // Controle de versão do schema com PRAGMA user_version
+  const resVer = db.exec('PRAGMA user_version;');
+  const versaoAtual = (resVer[0]?.values[0]?.[0] as number) || 0;
+
+  if (versaoAtual < 1) {
+    migrarParaTresCategorias(db);
+    db.run('PRAGMA user_version = 1;');
+  }
+}
+
+/**
+ * Recria as categorias padrão caso não existam
+ */
+export function recriarCategoriasPadrao(db: Database) {
+  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Gastos', '#2563eb');");
+  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Economias', '#10b981');");
+  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Reservas', '#f59e0b');");
 }
 
 /**
@@ -333,20 +348,30 @@ export async function restaurarArquivoSqlite(fileBuffer: ArrayBuffer): Promise<v
     }
   }
 
+  // Executa PRAGMA foreign_keys = ON sempre que o banco for restaurado de backup
+  novoDb.run('PRAGMA foreign_keys = ON;');
+  criarSchema(novoDb);
+
   dbInstance = novoDb;
   atualizarStatusAtrasados(dbInstance);
   await persistirDb();
 }
 
 /**
- * Limpa todos os dados do banco
+ * Limpa todos os dados do banco e recria as categorias padrão
  */
 export async function limparBancoDeDados(): Promise<void> {
   const db = await getDb();
+  db.run('PRAGMA foreign_keys = OFF;');
   db.run('DELETE FROM parcelas;');
   db.run('DELETE FROM contas;');
   db.run('DELETE FROM categorias;');
   db.run('DELETE FROM sqlite_sequence;');
+
+  // Depois de "Limpar banco", recria as categorias padrão
+  recriarCategoriasPadrao(db);
+  db.run('PRAGMA foreign_keys = ON;');
+
   await persistirDb();
 }
 

@@ -98,6 +98,26 @@ export async function excluirCategoria(id: number): Promise<{ success: boolean; 
 // CONTAS & PARCELAS
 // ==========================================
 
+/**
+ * Converte erros técnicos do SQLite em mensagens claras em português
+ */
+export function formatarErroAmigavel(err: any): Error {
+  const msg = (err?.message || String(err || '')).toLowerCase();
+  if (msg.includes('foreign key constraint failed')) {
+    return new Error('A categoria selecionada não foi encontrada ou não é válida. Por favor, selecione uma categoria válida.');
+  }
+  if (msg.includes('unique constraint failed')) {
+    return new Error('Já existe um registro cadastrado com estes dados.');
+  }
+  if (msg.includes('check constraint failed')) {
+    return new Error('Os valores informados não atendem aos critérios de validação (ex: tipo de conta ou parcelas inválidas).');
+  }
+  if (msg.includes('not null constraint failed')) {
+    return new Error('Por favor, preencha todos os campos obrigatórios.');
+  }
+  return new Error(err?.message || 'Não foi possível salvar o pagamento. Tente novamente.');
+}
+
 export interface NovaContaInput {
   descricao: string;
   categoria_id: number;
@@ -111,66 +131,101 @@ export interface NovaContaInput {
 
 export async function criarConta(input: NovaContaInput): Promise<number> {
   const db = await getDb();
+  // Garante que PRAGMA foreign_keys está ativo
+  db.run('PRAGMA foreign_keys = ON;');
   const hoje = new Date().toISOString().slice(0, 10);
 
-  db.run(
-    `INSERT INTO contas (descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
-     VALUES (?, ?, ?, ?, ?, ?, ?);`,
-    [
-      input.descricao.trim(),
-      input.categoria_id,
-      input.valor_total,
-      input.tipo,
-      input.forma_pagamento,
-      input.observacoes ? input.observacoes.trim() : null,
-      hoje,
-    ]
-  );
-
-  const res = db.exec('SELECT last_insert_rowid() as id;');
-  const contaId = res[0]?.values[0]?.[0] as number;
-
-  // Geração de Parcelas com base no tipo
-  if (input.tipo === 'unica') {
-    const status = input.data_primeiro_vencimento < hoje ? 'atrasado' : 'pendente';
-    db.run(
-      `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-       VALUES (?, 1, 1, ?, ?, NULL, ?, NULL);`,
-      [contaId, input.valor_total, input.data_primeiro_vencimento, status]
-    );
-  } else if (input.tipo === 'recorrente') {
-    // 12 meses futuros
-    for (let i = 0; i < 12; i++) {
-      const dataVenc = calcularDataVencimento(input.data_primeiro_vencimento, i);
-      const status = dataVenc < hoje ? 'atrasado' : 'pendente';
-      db.run(
-        `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-         VALUES (?, ?, 12, ?, ?, NULL, ?, NULL);`,
-        [contaId, i + 1, input.valor_total, dataVenc, status]
-      );
-    }
-  } else if (input.tipo === 'parcelada') {
-    const totalParcelas = Math.max(1, input.numero_parcelas || 1);
-    const valorParcelaBase = Math.floor((input.valor_total / totalParcelas) * 100) / 100;
-    // O resíduo de centavos vai para a primeira parcela para manter a soma exata
-    const residuo = Math.round((input.valor_total - valorParcelaBase * totalParcelas) * 100) / 100;
-
-    for (let i = 0; i < totalParcelas; i++) {
-      const valor = i === 0 ? Number((valorParcelaBase + residuo).toFixed(2)) : valorParcelaBase;
-      const dataVenc = calcularDataVencimento(input.data_primeiro_vencimento, i);
-      const status = dataVenc < hoje ? 'atrasado' : 'pendente';
-
-      db.run(
-        `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, NULL);`,
-        [contaId, i + 1, totalParcelas, valor, dataVenc, status]
-      );
+  // 1. Valida se a categoria existe. Se não existir nenhuma categoria, cria "Outros"
+  let categoriaId = input.categoria_id;
+  const catCheck = db.exec('SELECT id FROM categorias WHERE id = ?;', [categoriaId]);
+  if (!catCheck[0]?.values?.length) {
+    const anyCat = db.exec('SELECT id FROM categorias ORDER BY id ASC LIMIT 1;');
+    if (anyCat[0]?.values?.length) {
+      categoriaId = anyCat[0].values[0][0] as number;
+    } else {
+      // Cria a categoria "Outros" caso a tabela esteja vazia
+      db.run("INSERT INTO categorias (nome, cor) VALUES ('Outros', '#64748b');");
+      const newCatRes = db.exec('SELECT last_insert_rowid() as id;');
+      categoriaId = (newCatRes[0]?.values[0]?.[0] as number) || 1;
     }
   }
 
-  atualizarStatusAtrasados(db);
-  await persistirDb();
-  return contaId;
+  // 2. Grava a conta e todas as parcelas dentro de uma única transação atômica
+  db.run('BEGIN TRANSACTION;');
+
+  try {
+    db.run(
+      `INSERT INTO contas (descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
+       VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      [
+        input.descricao.trim(),
+        categoriaId,
+        input.valor_total,
+        input.tipo,
+        input.forma_pagamento || 'Geral',
+        input.observacoes ? input.observacoes.trim() : null,
+        hoje,
+      ]
+    );
+
+    // Obtém o id da conta com "SELECT last_insert_rowid()" logo após o INSERT na mesma transação
+    const res = db.exec('SELECT last_insert_rowid() as id;');
+    const contaId = res[0]?.values[0]?.[0] as number;
+
+    if (!contaId) {
+      throw new Error('Falha ao obter o identificador da conta criada.');
+    }
+
+    // Geração de Parcelas com base no tipo usando o contaId obtido
+    if (input.tipo === 'unica') {
+      const status = input.data_primeiro_vencimento < hoje ? 'atrasado' : 'pendente';
+      db.run(
+        `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+         VALUES (?, 1, 1, ?, ?, NULL, ?, NULL);`,
+        [contaId, input.valor_total, input.data_primeiro_vencimento, status]
+      );
+    } else if (input.tipo === 'recorrente') {
+      // 12 meses futuros
+      for (let i = 0; i < 12; i++) {
+        const dataVenc = calcularDataVencimento(input.data_primeiro_vencimento, i);
+        const status = dataVenc < hoje ? 'atrasado' : 'pendente';
+        db.run(
+          `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+           VALUES (?, ?, 12, ?, ?, NULL, ?, NULL);`,
+          [contaId, i + 1, input.valor_total, dataVenc, status]
+        );
+      }
+    } else if (input.tipo === 'parcelada') {
+      const totalParcelas = Math.max(1, input.numero_parcelas || 1);
+      const valorParcelaBase = Math.floor((input.valor_total / totalParcelas) * 100) / 100;
+      const residuo = Math.round((input.valor_total - valorParcelaBase * totalParcelas) * 100) / 100;
+
+      for (let i = 0; i < totalParcelas; i++) {
+        const valor = i === 0 ? Number((valorParcelaBase + residuo).toFixed(2)) : valorParcelaBase;
+        const dataVenc = calcularDataVencimento(input.data_primeiro_vencimento, i);
+        const status = dataVenc < hoje ? 'atrasado' : 'pendente';
+
+        db.run(
+          `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, NULL);`,
+          [contaId, i + 1, totalParcelas, valor, dataVenc, status]
+        );
+      }
+    }
+
+    db.run('COMMIT;');
+
+    atualizarStatusAtrasados(db);
+    await persistirDb();
+    return contaId;
+  } catch (err: any) {
+    try {
+      db.run('ROLLBACK;');
+    } catch {
+      // Ignora erro de rollback se não houver transação ativa
+    }
+    throw formatarErroAmigavel(err);
+  }
 }
 
 export async function excluirConta(contaId: number): Promise<void> {

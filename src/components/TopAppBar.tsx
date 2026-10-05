@@ -10,7 +10,14 @@ interface TopAppBarProps {
 export const TopAppBar: React.FC<TopAppBarProps> = ({ darkMode, setDarkMode, onNovaConta }) => {
   return (
     <header className="sticky top-0 z-30 bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 dark:from-slate-950 dark:via-blue-950 dark:to-slate-950 text-white px-4 py-3 flex items-center justify-between transition-colors shadow-md dark:border-b dark:border-slate-800">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
+        <img
+          src="/icon.svg"
+          alt="Ícone Em Dia"
+          className="w-7 h-7 rounded-lg shadow-xs flex-shrink-0"
+          width="28"
+          height="28"
+        />
         <h1 className="font-extrabold text-base tracking-tight text-white">
           Em Dia
         </h1>

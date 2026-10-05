@@ -17,6 +17,7 @@ import { ModalPagarParcela } from './components/ModalPagarParcela';
 import { ModalEditarConta } from './components/ModalEditarConta';
 import { ModalDetalhesConta } from './components/ModalDetalhesConta';
 import { ModalConfirmacao } from './components/ModalConfirmacao';
+import { SplashScreen } from './components/SplashScreen';
 
 import {
   Categoria,
@@ -63,6 +64,9 @@ export default function App() {
   // Aba selecionada na barra inferior: 'inicio' | 'graficos' | 'parcelas' | 'categorias' | 'ajustes'
   const [abaAtiva, setAbaAtiva] = useState<string>('inicio');
   const [mesSelecionado, setMesSelecionado] = useState<string>(getMesAnoAtual());
+
+  // Splash Screen de Inicialização
+  const [splashConcluida, setSplashConcluida] = useState<boolean>(false);
 
   // Dados do SQLite
   const [carregando, setCarregando] = useState<boolean>(true);
@@ -180,11 +184,20 @@ export default function App() {
   }, [parcelas]);
 
   return (
-    <div
-      className={`min-h-screen ${
-        darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
-      } flex flex-col justify-center items-center p-0 sm:py-6 transition-colors selection:bg-blue-600 selection:text-white`}
-    >
+    <>
+      {!splashConcluida && (
+        <SplashScreen
+          onPronto={() => {
+            setSplashConcluida(true);
+            carregarDados();
+          }}
+        />
+      )}
+      <div
+        className={`min-h-screen ${
+          darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
+        } flex flex-col justify-center items-center p-0 sm:py-6 transition-colors selection:bg-blue-600 selection:text-white`}
+      >
       {/* Container estilo aplicativo móvel */}
       <div
         className={`w-full max-w-md min-h-screen sm:min-h-[820px] ${
@@ -334,5 +347,6 @@ export default function App() {
         />
       </div>
     </div>
+    </>
   );
 }

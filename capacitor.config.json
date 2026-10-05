@@ -4,5 +4,15 @@
   "webDir": "dist",
   "server": {
     "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false
+    },
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#1E1B4B",
+      "showSpinner": false
+    }
   }
 }
