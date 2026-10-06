@@ -82,7 +82,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       }
 
       if (res.status === 404) {
-        setErro('Nenhuma versão de atualização encontrada no repositório.');
+        setErro('Nenhuma versão encontrada ou repositório inacessível (Erro 404). Se o repositório for privado, mude a visibilidade para Público no GitHub para permitir atualizações.');
         return;
       }
 
@@ -238,11 +238,11 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                   Versão {__APP_VERSION__}
                 </h4>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                  GitHub
+                  Atualização
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Repositório: <span className="font-mono font-medium text-slate-700 dark:text-slate-300">site3facil-a11y/Em-dia</span>
+                Canal oficial de atualizações do aplicativo
               </p>
             </div>
           </div>
