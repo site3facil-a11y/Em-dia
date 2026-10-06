@@ -259,6 +259,16 @@ export function recriarCategoriasPadrao(db: Database) {
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Gastos', '#2563eb');");
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Economias', '#10b981');");
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Reservas', '#f59e0b');");
+
+  // Garante que todas as contas normais (que não sejam porquinho de economia) pertençam à categoria Gastos
+  try {
+    db.run(`
+      UPDATE contas
+      SET categoria_id = (SELECT id FROM categorias WHERE nome = 'Gastos' LIMIT 1)
+      WHERE categoria_id IN (SELECT id FROM categorias WHERE nome = 'Economias')
+        AND (observacoes IS NULL OR observacoes NOT LIKE '%Porquinho%');
+    `);
+  } catch {}
 }
 
 /**

@@ -946,8 +946,6 @@ export async function obterMetricasDashboard(mesAnoRef?: string): Promise<Dashbo
     const nomeLower = (row.categoria_nome || '').toLowerCase();
     if (nomeLower.includes('economia') || nomeLower.includes('poupança')) {
       totalEconomiasMes += row.total;
-    } else if (nomeLower.includes('reserva')) {
-      totalReservasMes += row.total;
     } else {
       totalGastosMes += row.total;
     }
@@ -959,26 +957,19 @@ export async function obterMetricasDashboard(mesAnoRef?: string): Promise<Dashbo
     percentual: somaTotalCat > 0 ? (g.total / somaTotalCat) * 100 : 0,
   }));
 
-  // Residual do mês (valor previsto - valor pago) das contas pagas do mês
-  const stmtResidual = db.prepare(`
-    SELECT COALESCE(SUM(p.valor - COALESCE(p.valor_pago, p.valor)), 0) AS residual
-    FROM parcelas p
-    WHERE p.status = 'pago' 
-      AND (strftime('%Y-%m', p.data_pagamento) = ? OR (p.data_pagamento IS NULL AND strftime('%Y-%m', p.data_vencimento) = ?));
-  `);
-  stmtResidual.bind([mesAnoAtual, mesAnoAtual]);
-  stmtResidual.step();
-  const residualMes = (stmtResidual.getAsObject().residual as number) || 0;
-  stmtResidual.free();
+  // Sem cálculo de residual fictício (app não cadastra salário nem receitas)
+  const residualMes = 0;
 
-  // Reserva total acumulada (soma de economias/reservas pagas + saldo de resíduos favoráveis de todas as contas)
+  // Total acumulado guardado no Porquinho (apenas depósitos já marcados como pagos/guardados no Porquinho)
+  // 100% real: não inclui resíduos artificiais de contas normais
   const stmtReservaTotal = db.prepare(`
     SELECT 
-      COALESCE(SUM(CASE WHEN cat.nome IN ('Economias', 'Reservas') AND p.status = 'pago' THEN COALESCE(p.valor_pago, p.valor) ELSE 0 END), 0) +
-      COALESCE(SUM(CASE WHEN p.status = 'pago' THEN (p.valor - COALESCE(p.valor_pago, p.valor)) ELSE 0 END), 0) AS totalAcumulado
+      COALESCE(SUM(COALESCE(p.valor_pago, p.valor)), 0) AS totalAcumulado
     FROM parcelas p
     INNER JOIN contas c ON p.conta_id = c.id
-    INNER JOIN categorias cat ON c.categoria_id = cat.id;
+    INNER JOIN categorias cat ON c.categoria_id = cat.id
+    WHERE (LOWER(cat.nome) LIKE '%econ%' OR LOWER(cat.nome) LIKE '%poup%') 
+      AND p.status = 'pago';
   `);
   stmtReservaTotal.step();
   const reservaAcumuladaTotal = (stmtReservaTotal.getAsObject().totalAcumulado as number) || 0;
@@ -1008,8 +999,8 @@ export async function obterMetricasDashboard(mesAnoRef?: string): Promise<Dashbo
       SELECT 
         COALESCE(SUM(CASE WHEN p.status = 'pago' THEN COALESCE(p.valor_pago, p.valor) ELSE 0 END), 0) AS pago,
         COALESCE(SUM(CASE WHEN p.status IN ('pendente', 'atrasado') THEN p.valor ELSE 0 END), 0) AS pendente,
-        COALESCE(SUM(CASE WHEN cat.nome = 'Gastos' THEN p.valor ELSE 0 END), 0) AS gastos,
-        COALESCE(SUM(CASE WHEN cat.nome IN ('Economias', 'Reservas') THEN p.valor ELSE 0 END), 0) AS economias
+        COALESCE(SUM(CASE WHEN LOWER(cat.nome) NOT LIKE '%econ%' AND LOWER(cat.nome) NOT LIKE '%poup%' THEN p.valor ELSE 0 END), 0) AS gastos,
+        COALESCE(SUM(CASE WHEN LOWER(cat.nome) LIKE '%econ%' OR LOWER(cat.nome) LIKE '%poup%' THEN p.valor ELSE 0 END), 0) AS economias
       FROM parcelas p
       INNER JOIN contas c ON p.conta_id = c.id
       INNER JOIN categorias cat ON c.categoria_id = cat.id

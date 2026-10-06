@@ -93,11 +93,11 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
           </p>
         </div>
 
-        {/* Economias (Poupado) */}
+        {/* Economias (Porquinho) */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/20 shadow-2xs">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-              2. Economias (Poupado)
+              2. Economias (Porquinho)
             </span>
             <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 flex items-center justify-center">
               <TrendingUp className="w-4 h-4" />
@@ -107,11 +107,11 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
             {formatarMoeda(totalEconomiasMes)}
           </h4>
           <p className="text-[11px] text-emerald-800/80 dark:text-emerald-400/80 mt-1">
-            Dinheiro guardado para si mesmo (metas ativas)
+            Dinheiro planejado para o Porquinho neste mês
           </p>
           {reservaAcumuladaTotal > 0 && (
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-900/40 flex items-center justify-between">
-              <span>Total guardado acumulado:</span>
+              <span>Total guardado no Porquinho:</span>
               <strong className="font-mono text-emerald-700 dark:text-emerald-300">
                 {formatarMoeda(reservaAcumuladaTotal)}
               </strong>

@@ -154,45 +154,25 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
             />
           </div>
 
-          {/* Categoria e Valor */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Categoria *
-              </label>
-              <select
+          {/* Valor da Parcela */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Valor da Parcela (R$) *
+            </label>
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                R$
+              </span>
+              <input
+                type="text"
                 required
-                value={categoriaId}
-                onChange={(e) => setCategoriaId(Number(e.target.value))}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium"
-              >
-                {categorias.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.nome}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Valor da Parcela (R$) *
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  R$
-                </span>
-                <input
-                  type="text"
-                  required
-                  disabled={isPaga}
-                  value={valorStr}
-                  onChange={(e) => setValorStr(e.target.value)}
-                  className={`w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 ${
-                    isPaga ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''
-                  }`}
-                />
-              </div>
+                disabled={isPaga}
+                value={valorStr}
+                onChange={(e) => setValorStr(e.target.value)}
+                className={`w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 ${
+                  isPaga ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''
+                }`}
+              />
             </div>
           </div>
 

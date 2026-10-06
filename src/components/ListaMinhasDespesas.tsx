@@ -63,9 +63,6 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
   const isEconomia =
     p.categoria_nome?.toLowerCase().includes('poupança') ||
     p.categoria_nome?.toLowerCase().includes('economia');
-  const isReserva = p.categoria_nome?.toLowerCase().includes('reserva');
-  const nomeCategoriaExibida = isEconomia ? 'Economias' : isReserva ? 'Reservas' : 'Gastos';
-  const corCategoriaExibida = isEconomia ? '#10b981' : isReserva ? '#f59e0b' : '#2563eb';
 
   const ACTION_WIDTH = 140; // largura dos botões combinados (Editar + Excluir)
   const LOCK_THRESHOLD = 56; // ~40% da largura dos botões para travar aberto
@@ -247,37 +244,28 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
                   {p.conta_descricao}
                 </h4>
                 {isEconomia && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                    💰 Economia
-                  </span>
-                )}
-                {isReserva && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-                    🛡️ Reserva
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-0.5">
+                    🐷 Porquinho
                   </span>
                 )}
                 {p.total_parcelas > 1 && (
-                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-900/50">
+                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-900/50">
                     {p.numero_parcela}/{p.total_parcelas}
                   </span>
                 )}
               </div>
 
               <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                <span className="flex items-center gap-1">
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: corCategoriaExibida }}
-                  />
-                  <strong className="font-semibold text-slate-700 dark:text-slate-300">
-                    {nomeCategoriaExibida}
-                  </strong>
-                </span>
-                <span>•</span>
                 <span>
                   {isEconomia ? 'Dia de guardar:' : 'Vence'}{' '}
                   {formatarData(p.data_vencimento)}
                 </span>
+                {p.forma_pagamento && p.forma_pagamento !== 'Geral' && (
+                  <>
+                    <span>•</span>
+                    <span className="truncate">{p.forma_pagamento}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>

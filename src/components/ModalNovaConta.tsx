@@ -18,7 +18,6 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   onSalvar,
 }) => {
   const [descricao, setDescricao] = useState('');
-  const [categoriaId, setCategoriaId] = useState<number>(categorias[0]?.id || 0);
   const [valorTotalStr, setValorTotalStr] = useState('');
   const [tipo, setTipo] = useState<TipoConta>('unica');
   const [numeroParcelas, setNumeroParcelas] = useState<number>(2);
@@ -28,16 +27,14 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  // Garante que a primeira categoria fique selecionada por padrão
-  React.useEffect(() => {
-    if (categorias.length > 0 && (!categoriaId || !categorias.some((c) => c.id === categoriaId))) {
-      setCategoriaId(categorias[0].id);
-    }
-  }, [categorias, categoriaId]);
-
   if (!aberto) return null;
 
-  const categoriaFinalId = categoriaId || categorias[0]?.id || 1;
+  // Busca a categoria 'Gastos' (todas as contas normais são gastos; apenas o porquinho é economia)
+  const catGastos =
+    categorias.find((c) => c.nome.toLowerCase() === 'gastos') ||
+    categorias.find((c) => !c.nome.toLowerCase().includes('economia') && !c.nome.toLowerCase().includes('reserva')) ||
+    categorias[0];
+  const categoriaFinalId = catGastos?.id || 1;
   const valorTotalNum = parseFloat(valorTotalStr.replace(/\./g, '').replace(',', '.')) || 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -130,43 +127,23 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
             />
           </div>
 
-          {/* Categoria e Valor Total */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Categoria *
-              </label>
-              <select
+          {/* Valor Total */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Valor Total (R$) *
+            </label>
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                R$
+              </span>
+              <input
+                type="text"
                 required
-                value={categoriaFinalId}
-                onChange={(e) => setCategoriaId(Number(e.target.value))}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium"
-              >
-                {categorias.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.nome}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Valor Total (R$) *
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  R$
-                </span>
-                <input
-                  type="text"
-                  required
-                  placeholder="0,00"
-                  value={valorTotalStr}
-                  onChange={(e) => setValorTotalStr(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                />
-              </div>
+                placeholder="0,00"
+                value={valorTotalStr}
+                onChange={(e) => setValorTotalStr(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
             </div>
           </div>
 
