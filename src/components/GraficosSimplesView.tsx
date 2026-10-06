@@ -34,8 +34,6 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
   const {
     totalGastosMes,
     totalEconomiasMes,
-    totalReservasMes,
-    residualMes,
     reservaAcumuladaTotal,
     evolucaoMensal,
   } = metrics;
@@ -46,8 +44,6 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
 
   const mesesPassados = evolucaoMensal.filter((m) => m.tipoMes === 'passado');
   const totalGastoPassado = mesesPassados.reduce((acc, m) => acc + m.pago, 0);
-
-  const isResidualPositivo = residualMes >= 0;
 
   return (
     <div className="space-y-4 pb-20">
@@ -77,9 +73,9 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
         </button>
       </div>
 
-      {/* OS 3 PILARES: GASTOS • ECONOMIAS • RESERVAS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* Pilar 1: Gastos */}
+      {/* CARDS RESUMO DO MÊS: GASTOS E ECONOMIAS (SEM RESÍDUO) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Gastos do Mês */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -89,7 +85,7 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
               <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <h4 className="text-xl font-extrabold font-mono text-slate-900 dark:text-white">
+          <h4 className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white">
             {formatarMoeda(totalGastosMes)}
           </h4>
           <p className="text-[11px] text-slate-400 mt-1">
@@ -97,7 +93,7 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
           </p>
         </div>
 
-        {/* Pilar 2: Economias */}
+        {/* Economias (Poupado) */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/20 shadow-2xs">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
@@ -107,46 +103,20 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
               <TrendingUp className="w-4 h-4" />
             </div>
           </div>
-          <h4 className="text-xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+          <h4 className="text-2xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
             {formatarMoeda(totalEconomiasMes)}
           </h4>
           <p className="text-[11px] text-emerald-800/80 dark:text-emerald-400/80 mt-1">
             Dinheiro guardado para si mesmo (metas ativas)
           </p>
-        </div>
-
-        {/* Pilar 3: Reservas & Saldo Residual */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-              3. Reserva & Resíduo
-            </span>
-            <div className="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-              <ShieldCheck className="w-4 h-4" />
+          {reservaAcumuladaTotal > 0 && (
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-900/40 flex items-center justify-between">
+              <span>Total guardado acumulado:</span>
+              <strong className="font-mono text-emerald-700 dark:text-emerald-300">
+                {formatarMoeda(reservaAcumuladaTotal)}
+              </strong>
             </div>
-          </div>
-          
-          <div className="flex items-baseline gap-2">
-            <h4 className={`text-xl font-extrabold font-mono ${
-              isResidualPositivo ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-            }`}>
-              {isResidualPositivo ? `+${formatarMoeda(residualMes)}` : formatarMoeda(residualMes)}
-            </h4>
-            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-              isResidualPositivo
-                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-            }`}>
-              {isResidualPositivo ? 'Favorável (Sobra)' : 'Desfavorável'}
-            </span>
-          </div>
-
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 pt-1.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-            <span>Fundo Total Acumulado:</span>
-            <strong className="font-mono text-slate-800 dark:text-slate-200">
-              {formatarMoeda(reservaAcumuladaTotal)}
-            </strong>
-          </div>
+          )}
         </div>
       </div>
 

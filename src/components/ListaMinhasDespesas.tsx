@@ -8,7 +8,6 @@ import {
   Sparkles,
   Pencil,
   Trash2,
-  MoreVertical,
 } from 'lucide-react';
 import { Parcela, DashboardMetrics } from '../types';
 import { formatarMoeda, formatarData, formatarMesAno } from '../utils/formatters';
@@ -120,41 +119,47 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
   const currentTranslateX = dragOffset !== null ? dragOffset : estaAberto ? -ACTION_WIDTH : 0;
 
   return (
-    <div className="relative rounded-2xl overflow-hidden select-none">
-      {/* Botões Revelados ATRÁS do card (Editar azul e Excluir vermelho) */}
-      <div className="absolute right-0 top-0 bottom-0 w-[140px] flex z-0 rounded-2xl overflow-hidden">
-        {/* Botão Editar */}
+    <div data-swipe-card="true" className="relative rounded-2xl overflow-hidden select-none">
+      {/* Botões Revelados ATRÁS do card (Editar azul sólido e Excluir vermelho sólido - visíveis APENAS quando aberto ou arrastando) */}
+      <div
+        className={`absolute right-0 top-0 bottom-0 w-[140px] flex z-0 rounded-2xl overflow-hidden transition-opacity duration-150 ${
+          estaAberto || dragOffset !== null ? 'opacity-100 pointer-events-auto visible' : 'opacity-0 pointer-events-none invisible'
+        }`}
+      >
+        {/* Botão Editar (Azul sólido e nítido) */}
         <button
           type="button"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            onFechar();
             onEditar(p);
+            onFechar();
           }}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer"
+          className="flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors select-none font-bold shadow-inner"
           title="Editar este pagamento"
         >
-          <Pencil className="w-5 h-5" />
-          <span className="text-[11px] font-bold">Editar</span>
+          <Pencil className="w-5 h-5 stroke-[2.5]" />
+          <span className="text-xs font-bold text-white">Editar</span>
         </button>
 
-        {/* Botão Excluir */}
+        {/* Botão Excluir (Vermelho sólido e nítido) */}
         <button
           type="button"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            onFechar();
             onExcluir(p);
+            onFechar();
           }}
-          className="flex-1 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer"
+          className="flex-1 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors select-none font-bold shadow-inner"
           title="Excluir este pagamento"
         >
-          <Trash2 className="w-5 h-5" />
-          <span className="text-[11px] font-bold">Excluir</span>
+          <Trash2 className="w-5 h-5 stroke-[2.5]" />
+          <span className="text-xs font-bold text-white">Excluir</span>
         </button>
       </div>
 
-      {/* Card da Frente (desliza para a esquerda) */}
+      {/* Card da Frente (desliza para a esquerda, 100% opaco e sólido, sem transparência para não vazar os botões) */}
       <div
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -172,13 +177,13 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
         className={`relative z-10 bg-white dark:bg-slate-900 rounded-2xl p-3.5 sm:p-4 border flex flex-col justify-between shadow-2xs hover:shadow-xs transition-colors ${
           isEconomia
             ? isPago
-              ? 'border-emerald-300 dark:border-emerald-900 bg-emerald-50/20'
-              : 'border-emerald-200 dark:border-emerald-900/60'
+              ? 'border-emerald-300 dark:border-emerald-900 bg-white dark:bg-slate-900'
+              : 'border-emerald-200 dark:border-emerald-900/60 bg-white dark:bg-slate-900'
             : isPago
-            ? 'border-emerald-200/80 dark:border-emerald-950/60 opacity-90'
+            ? 'border-emerald-300/80 dark:border-emerald-950/80 bg-white dark:bg-slate-900'
             : isAtrasado
-            ? 'border-rose-300 dark:border-rose-900/80 bg-rose-50/20'
-            : 'border-slate-200 dark:border-slate-800'
+            ? 'border-rose-300 dark:border-rose-900/80 bg-white dark:bg-slate-900'
+            : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
         }`}
       >
         {/* Linha Superior */}
@@ -306,19 +311,24 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
               </span>
             </div>
 
-            {/* Três pontinhos alternativo ao swipe */}
+            {/* Seta > para abrir as opções de Editar e Excluir */}
             <button
               type="button"
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 if (estaAberto) onFechar();
                 else onAbrir();
               }}
-              className="p-1.5 -mr-1 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Opções (Editar / Excluir)"
-              aria-label="Mais opções"
+              className="p-1.5 -mr-1 rounded-xl text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-center"
+              title={estaAberto ? 'Fechar opções' : 'Abrir opções (Editar / Excluir)'}
+              aria-label="Abrir opções de editar e excluir"
             >
-              <MoreVertical className="w-4 h-4" />
+              <ChevronRight
+                className={`w-5 h-5 transition-transform duration-200 stroke-[2.5] ${
+                  estaAberto ? 'rotate-180 text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              />
             </button>
           </div>
         </div>
@@ -360,14 +370,23 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
     } catch {}
   }, []);
 
-  // Fecha qualquer card aberto ao clicar em qualquer lugar fora
+  // Fecha qualquer card aberto ao clicar em qualquer lugar fora dos cards
   useEffect(() => {
-    const handleGlobalClick = () => {
+    if (!cardAbertoId) return;
+    const handleGlobalClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-swipe-card]')) {
+        return;
+      }
       setCardAbertoId(null);
     };
     window.addEventListener('click', handleGlobalClick);
-    return () => window.removeEventListener('click', handleGlobalClick);
-  }, []);
+    window.addEventListener('touchend', handleGlobalClick);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('touchend', handleGlobalClick);
+    };
+  }, [cardAbertoId]);
 
   // Navegação de mês
   const navegarMes = (direcao: number) => {
@@ -400,10 +419,7 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
   const vencendoHojeQtd = metrics?.qtdVencendoHoje || 0;
 
   return (
-    <div
-      onClick={() => setCardAbertoId(null)}
-      className="space-y-4 pb-28"
-    >
+    <div className="space-y-4 pb-28">
       {/* CARD PRINCIPAL SUPERIOR: TOTAL DE DESPESAS DO MÊS (SEM O BOTÃO BRANCO) */}
       <div className="bg-gradient-to-br from-blue-900 via-blue-950 to-slate-900 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950 text-white rounded-3xl p-5 shadow-xl shadow-blue-950/25 border border-blue-800/40 dark:border-blue-900/40 relative overflow-hidden">
         {/* Efeitos decorativos de luz e degradê suave */}

@@ -15,6 +15,9 @@ import { ModalNovaConta } from './components/ModalNovaConta';
 import { ModalCriarPorquinho } from './components/ModalCriarPorquinho';
 import { ModalPagarParcela } from './components/ModalPagarParcela';
 import { ModalEditarConta } from './components/ModalEditarConta';
+import { ModalEditarParcela } from './components/ModalEditarParcela';
+import { ModalConfirmarExclusao } from './components/ModalConfirmarExclusao';
+import { SnackbarDesfazer } from './components/SnackbarDesfazer';
 import { ModalDetalhesConta } from './components/ModalDetalhesConta';
 import { ModalConfirmacao } from './components/ModalConfirmacao';
 import { SplashScreen } from './components/SplashScreen';
@@ -40,6 +43,12 @@ import {
   listarParcelamentos,
   obterMetricasDashboard,
   NovaContaInput,
+  editarParcelaEConta,
+  excluirParcelaIndividual,
+  excluirContaInteiraTransacao,
+  restaurarExclusao,
+  EditarParcelaInput,
+  DadosRestauracaoExclusao,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
 
@@ -80,6 +89,10 @@ export default function App() {
   const [modalPorquinhoAberto, setModalPorquinhoAberto] = useState(false);
   const [parcelaEmPagamento, setParcelaEmPagamento] = useState<Parcela | null>(null);
   const [contaEmEdicao, setContaEmEdicao] = useState<Conta | null>(null);
+  const [parcelaEmEdicao, setParcelaEmEdicao] = useState<Parcela | null>(null);
+  const [parcelaEmExclusao, setParcelaEmExclusao] = useState<Parcela | null>(null);
+  const [dadosDesfazer, setDadosDesfazer] = useState<DadosRestauracaoExclusao | null>(null);
+  const [snackbarDesfazerAberto, setSnackbarDesfazerAberto] = useState(false);
   const [detalhesContaParcelas, setDetalhesContaParcelas] = useState<Parcela[] | null>(null);
   const [exclusaoPendente, setExclusaoPendente] = useState<{ contaId: number; descricao: string } | null>(null);
 
@@ -179,6 +192,46 @@ export default function App() {
     await carregarDados();
   };
 
+  // Ações de Edição e Exclusão Swipe/Menu de Parcelas
+  const handleEditarParcela = (parcela: Parcela) => {
+    setParcelaEmEdicao(parcela);
+  };
+
+  const handleSalvarEdicaoParcela = async (dados: EditarParcelaInput) => {
+    await editarParcelaEConta(dados);
+    await carregarDados();
+  };
+
+  const handleAbrirExclusaoParcela = (parcela: Parcela) => {
+    setParcelaEmExclusao(parcela);
+  };
+
+  const handleConfirmarExclusaoParcela = async (tipo: 'parcela' | 'conta') => {
+    if (!parcelaEmExclusao) return;
+    let dadosRestauracao: DadosRestauracaoExclusao;
+    if (tipo === 'parcela') {
+      dadosRestauracao = await excluirParcelaIndividual(parcelaEmExclusao.id);
+    } else {
+      dadosRestauracao = await excluirContaInteiraTransacao(parcelaEmExclusao.conta_id);
+    }
+    setDadosDesfazer(dadosRestauracao);
+    setSnackbarDesfazerAberto(true);
+    setParcelaEmExclusao(null);
+    await carregarDados();
+  };
+
+  const handleDesfazerExclusao = async () => {
+    if (!dadosDesfazer) return;
+    try {
+      await restaurarExclusao(dadosDesfazer);
+      setDadosDesfazer(null);
+      setSnackbarDesfazerAberto(false);
+      await carregarDados();
+    } catch (err) {
+      console.error('Erro ao desfazer exclusão:', err);
+    }
+  };
+
   const totalContas = React.useMemo(() => {
     return new Set(parcelas.map((p) => p.conta_id)).size;
   }, [parcelas]);
@@ -212,7 +265,12 @@ export default function App() {
         />
 
         {/* Conteúdo Dinâmico das Abas */}
-        <main className="flex-1 p-4 overflow-y-auto">
+        <main
+          className="flex-1 p-4 overflow-y-auto"
+          style={{
+            paddingBottom: 'calc(64px + max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 12px) + 16px)',
+          }}
+        >
           {abaAtiva === 'inicio' && (
             <ListaMinhasDespesas
               parcelas={parcelas}
@@ -223,7 +281,8 @@ export default function App() {
               onDesfazerPagamento={handleDesfazerPagamento}
               onNovaConta={() => setModalNovaContaAberto(true)}
               onVerDetalhes={handleVerDetalhesConta}
-              onExcluir={(id, desc) => setExclusaoPendente({ contaId: id, descricao: desc })}
+              onEditarParcela={handleEditarParcela}
+              onExcluirParcela={handleAbrirExclusaoParcela}
               carregando={carregando}
             />
           )}
@@ -296,6 +355,16 @@ export default function App() {
           setAbaAtiva={setAbaAtiva}
           qtdAtrasadas={metricas?.qtdAtrasadas || 0}
           onNovaConta={() => setModalNovaContaAberto(true)}
+          ocultar={
+            modalNovaContaAberto ||
+            modalPorquinhoAberto ||
+            parcelaEmPagamento !== null ||
+            contaEmEdicao !== null ||
+            parcelaEmEdicao !== null ||
+            parcelaEmExclusao !== null ||
+            detalhesContaParcelas !== null ||
+            exclusaoPendente !== null
+          }
         />
 
         {/* Modais */}
@@ -325,6 +394,29 @@ export default function App() {
           conta={contaEmEdicao}
           categorias={categorias}
           onSalvar={handleSalvarEdicaoConta}
+        />
+
+        <ModalEditarParcela
+          aberto={parcelaEmEdicao !== null}
+          onFechar={() => setParcelaEmEdicao(null)}
+          parcela={parcelaEmEdicao}
+          categorias={categorias}
+          onSalvar={handleSalvarEdicaoParcela}
+        />
+
+        <ModalConfirmarExclusao
+          aberto={parcelaEmExclusao !== null}
+          onFechar={() => setParcelaEmExclusao(null)}
+          parcela={parcelaEmExclusao}
+          onConfirmar={handleConfirmarExclusaoParcela}
+        />
+
+        <SnackbarDesfazer
+          visivel={snackbarDesfazerAberto}
+          mensagem="Excluído."
+          onDesfazer={handleDesfazerExclusao}
+          onFechar={() => setSnackbarDesfazerAberto(false)}
+          duracaoMs={5000}
         />
 
         <ModalDetalhesConta

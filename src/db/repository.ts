@@ -943,9 +943,14 @@ export async function obterMetricasDashboard(mesAnoRef?: string): Promise<Dashbo
     gastosRaw.push(row);
     somaTotalCat += row.total;
 
-    if (row.categoria_nome === 'Gastos') totalGastosMes = row.total;
-    else if (row.categoria_nome === 'Economias') totalEconomiasMes = row.total;
-    else if (row.categoria_nome === 'Reservas') totalReservasMes = row.total;
+    const nomeLower = (row.categoria_nome || '').toLowerCase();
+    if (nomeLower.includes('economia') || nomeLower.includes('poupança')) {
+      totalEconomiasMes += row.total;
+    } else if (nomeLower.includes('reserva')) {
+      totalReservasMes += row.total;
+    } else {
+      totalGastosMes += row.total;
+    }
   }
   stmtCat.free();
 

@@ -144,7 +144,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
               />
             </div>
             
-            {/* Indicador de Resíduo Favorável / Desfavorável em tempo real */}
+            {/* Indicador de Desconto ou Juros em tempo real */}
             {valorPagoNum > 0 && (
               <div className={`mt-2 p-2.5 rounded-xl border text-xs flex items-center justify-between ${
                 Number((parcela.valor - valorPagoNum).toFixed(2)) > 0
@@ -155,18 +155,18 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
               }`}>
                 <span>
                   {Number((parcela.valor - valorPagoNum).toFixed(2)) > 0 ? (
-                    <strong>✨ Residual Favorável (Economia/Sobra):</strong>
+                    <strong>✨ Desconto obtido:</strong>
                   ) : Number((parcela.valor - valorPagoNum).toFixed(2)) < 0 ? (
-                    <strong>⚠️ Residual Desfavorável (Juros/Acréscimo):</strong>
+                    <strong>⚠️ Juros / Acréscimo:</strong>
                   ) : (
                     <span>Valor exato previsto:</span>
                   )}
                 </span>
                 <strong className="font-mono text-sm">
                   {Number((parcela.valor - valorPagoNum).toFixed(2)) > 0
-                    ? `+${formatarMoeda(parcela.valor - valorPagoNum)}`
+                    ? `-${formatarMoeda(parcela.valor - valorPagoNum)}`
                     : Number((parcela.valor - valorPagoNum).toFixed(2)) < 0
-                    ? `-${formatarMoeda(valorPagoNum - parcela.valor)}`
+                    ? `+${formatarMoeda(valorPagoNum - parcela.valor)}`
                     : formatarMoeda(parcela.valor)}
                 </strong>
               </div>
