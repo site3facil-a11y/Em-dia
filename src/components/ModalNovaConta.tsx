@@ -23,6 +23,8 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [tipo, setTipo] = useState<TipoConta>('unica');
   const [numeroParcelas, setNumeroParcelas] = useState<number>(2);
   const [dataVencimento, setDataVencimento] = useState(getHojeString());
+  const [formaPagamento, setFormaPagamento] = useState('Geral');
+  const [observacoes, setObservacoes] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -65,8 +67,8 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
         categoria_id: categoriaFinalId,
         valor_total: valorTotalNum,
         tipo,
-        forma_pagamento: 'Geral',
-        observacoes: undefined,
+        forma_pagamento: formaPagamento.trim() || 'Geral',
+        observacoes: observacoes.trim() || undefined,
         data_primeiro_vencimento: dataVencimento,
         numero_parcelas: tipo === 'parcelada' ? numeroParcelas : (tipo === 'recorrente' ? 12 : 1),
       });
@@ -255,6 +257,35 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
               <span className="text-[10px] text-slate-400 block mt-1">
                 {tipo === 'recorrente' ? 'Dia do vencimento a cada mês' : 'Data do pagamento'}
               </span>
+            </div>
+          </div>
+
+          {/* Forma de Pagamento e Observações */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Forma de Pagamento
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: Geral, Cartão, Dinheiro..."
+                value={formaPagamento}
+                onChange={(e) => setFormaPagamento(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Observações (opcional)
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: Código de barras, notas..."
+                value={observacoes}
+                onChange={(e) => setObservacoes(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Home, PieChart, Layers, Settings, Plus } from 'lucide-react';
 
 interface BottomNavigationProps {
@@ -6,6 +6,7 @@ interface BottomNavigationProps {
   setAbaAtiva: (aba: string) => void;
   qtdAtrasadas: number;
   onNovaConta: () => void;
+  ocultar?: boolean;
 }
 
 export const BottomNavigation: React.FC<BottomNavigationProps> = ({
@@ -13,10 +14,57 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   setAbaAtiva,
   qtdAtrasadas,
   onNovaConta,
+  ocultar = false,
 }) => {
+  const [tecladoAberto, setTecladoAberto] = useState(false);
+
+  useEffect(() => {
+    // Detecta abertura do teclado virtual no Android / iOS via visualViewport ou foco em campos
+    const vv = window.visualViewport;
+    if (!vv) {
+      const handleFocusIn = (e: FocusEvent) => {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+          setTecladoAberto(true);
+        }
+      };
+      const handleFocusOut = () => {
+        setTecladoAberto(false);
+      };
+      window.addEventListener('focusin', handleFocusIn);
+      window.addEventListener('focusout', handleFocusOut);
+      return () => {
+        window.removeEventListener('focusin', handleFocusIn);
+        window.removeEventListener('focusout', handleFocusOut);
+      };
+    }
+
+    const initialHeight = vv.height;
+    const handleResize = () => {
+      // Se a altura visível reduzir em mais de 150px, o teclado virtual está aberto
+      if (initialHeight - vv.height > 150) {
+        setTecladoAberto(true);
+      } else {
+        setTecladoAberto(false);
+      }
+    };
+
+    vv.addEventListener('resize', handleResize);
+    return () => vv.removeEventListener('resize', handleResize);
+  }, []);
+
+  if (ocultar || tecladoAberto) {
+    return null;
+  }
+
   return (
-    <nav className="sticky bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors">
-      <div className="max-w-md mx-auto px-3 h-16 flex items-center justify-between">
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+      style={{
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 12px)',
+      }}
+    >
+      <div className="max-w-md mx-auto px-2 sm:px-3 h-16 flex items-center justify-between">
         {/* Início */}
         <button
           onClick={() => setAbaAtiva('inicio')}

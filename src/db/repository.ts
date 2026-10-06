@@ -230,10 +230,326 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
 
 export async function excluirConta(contaId: number): Promise<void> {
   const db = await getDb();
-  // ON DELETE CASCADE no SQLite remove as parcelas automaticamente
-  db.run('DELETE FROM parcelas WHERE conta_id = ?;', [contaId]);
-  db.run('DELETE FROM contas WHERE id = ?;', [contaId]);
-  await persistirDb();
+  db.run('PRAGMA foreign_keys = ON;');
+  db.run('BEGIN TRANSACTION;');
+  try {
+    // Exclui parcelas antes da conta dentro da transação para não violar foreign key
+    db.run('DELETE FROM parcelas WHERE conta_id = ?;', [contaId]);
+    db.run('DELETE FROM contas WHERE id = ?;', [contaId]);
+    db.run('COMMIT;');
+    await persistirDb();
+  } catch (err: any) {
+    try { db.run('ROLLBACK;'); } catch {}
+    throw formatarErroAmigavel(err);
+  }
+}
+
+export interface EditarParcelaInput {
+  parcelaId: number;
+  descricao: string;
+  categoria_id: number;
+  valor: number;
+  data_vencimento: string;
+  forma_pagamento: string;
+  observacoes?: string;
+  escopo: 'apenas_esta' | 'esta_e_proximas';
+}
+
+export interface DadosRestauracaoExclusao {
+  tipoExclusao: 'parcela' | 'conta';
+  conta: {
+    id: number;
+    descricao: string;
+    categoria_id: number;
+    valor_total: number;
+    tipo: TipoConta;
+    forma_pagamento: string;
+    observacoes?: string | null;
+    data_criacao: string;
+  };
+  parcelas: Parcela[];
+}
+
+/**
+ * Atualiza os dados de uma parcela e sua conta dentro de uma transação segura.
+ * Se a parcela estiver paga, o valor não pode ser alterado sem desfazer o pagamento.
+ */
+export async function editarParcelaEConta(input: EditarParcelaInput): Promise<void> {
+  const db = await getDb();
+  db.run('PRAGMA foreign_keys = ON;');
+
+  const res = db.exec(`
+    SELECT p.id, p.conta_id, p.numero_parcela, p.total_parcelas, p.valor, p.data_vencimento, p.status, c.tipo
+    FROM parcelas p
+    JOIN contas c ON p.conta_id = c.id
+    WHERE p.id = ?;
+  `, [input.parcelaId]);
+
+  if (!res[0]?.values?.length) {
+    throw new Error('A parcela selecionada não foi encontrada no banco SQLite.');
+  }
+
+  const [id, contaId, numeroParcela, totalParcelas, valorAtual, dataVencAtual, status, tipoConta] = res[0].values[0];
+
+  // Não permite editar o valor de uma parcela paga sem antes desfazer o pagamento
+  if (status === 'pago' && Math.abs(Number(valorAtual) - input.valor) > 0.001) {
+    throw new Error('Não é permitido alterar o valor de uma parcela já paga. Desfaça o pagamento primeiro.');
+  }
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  const novoStatus = status === 'pago' ? 'pago' : (input.data_vencimento < hoje ? 'atrasado' : 'pendente');
+
+  db.run('BEGIN TRANSACTION;');
+  try {
+    // 1. Atualiza dados gerais da conta
+    db.run(
+      `UPDATE contas 
+       SET descricao = ?, categoria_id = ?, forma_pagamento = ?, observacoes = ?
+       WHERE id = ?;`,
+      [input.descricao.trim(), input.categoria_id, input.forma_pagamento, input.observacoes?.trim() || null, contaId]
+    );
+
+    // 2. Atualiza a parcela selecionada
+    if (status !== 'pago') {
+      db.run(
+        `UPDATE parcelas 
+         SET valor = ?, data_vencimento = ?, status = ?
+         WHERE id = ?;`,
+        [input.valor, input.data_vencimento, novoStatus, input.parcelaId]
+      );
+    } else {
+      // Mantém valor e valor_pago intactos se estiver paga
+      db.run(
+        `UPDATE parcelas 
+         SET data_vencimento = ?
+         WHERE id = ?;`,
+        [input.data_vencimento, input.parcelaId]
+      );
+    }
+
+    // 3. Se for 'esta_e_proximas' em parcelada/recorrente: aplica o valor apenas às próximas parcelas NÃO PAGAS
+    if (input.escopo === 'esta_e_proximas' && (tipoConta === 'parcelada' || tipoConta === 'recorrente')) {
+      db.run(
+        `UPDATE parcelas 
+         SET valor = ?
+         WHERE conta_id = ? AND numero_parcela > ? AND status != 'pago';`,
+        [input.valor, contaId, numeroParcela]
+      );
+    }
+
+    // 4. Recalcula o valor_total da conta no SQLite
+    db.run(
+      `UPDATE contas 
+       SET valor_total = (SELECT COALESCE(SUM(valor), 0) FROM parcelas WHERE conta_id = ?)
+       WHERE id = ?;`,
+      [contaId, contaId]
+    );
+
+    db.run('COMMIT;');
+    atualizarStatusAtrasados(db);
+    await persistirDb();
+  } catch (err: any) {
+    try { db.run('ROLLBACK;'); } catch {}
+    throw formatarErroAmigavel(err);
+  }
+}
+
+/**
+ * Exclui uma parcela individual de uma conta parcelada ou recorrente.
+ * Se for a única parcela restante, remove a conta inteira.
+ */
+export async function excluirParcelaIndividual(parcelaId: number): Promise<DadosRestauracaoExclusao> {
+  const db = await getDb();
+  db.run('PRAGMA foreign_keys = ON;');
+
+  const resParcela = db.exec(`
+    SELECT p.id, p.conta_id, p.numero_parcela, p.total_parcelas, p.valor, p.data_vencimento, p.data_pagamento, p.status, p.valor_pago,
+           c.descricao, c.categoria_id, c.valor_total, c.tipo, c.forma_pagamento, c.observacoes, c.data_criacao
+    FROM parcelas p
+    JOIN contas c ON p.conta_id = c.id
+    WHERE p.id = ?;
+  `, [parcelaId]);
+
+  if (!resParcela[0]?.values?.length) {
+    throw new Error('A parcela selecionada para exclusão não foi encontrada.');
+  }
+
+  const row = resParcela[0].values[0];
+  const contaId = row[1] as number;
+  const parcelaObj: Parcela = {
+    id: row[0] as number,
+    conta_id: contaId,
+    numero_parcela: row[2] as number,
+    total_parcelas: row[3] as number,
+    valor: row[4] as number,
+    data_vencimento: row[5] as string,
+    data_pagamento: row[6] as string | null,
+    status: row[7] as any,
+    valor_pago: row[8] as number | null,
+    conta_descricao: row[9] as string,
+  };
+
+  const contaObj = {
+    id: contaId,
+    descricao: row[9] as string,
+    categoria_id: row[10] as number,
+    valor_total: row[11] as number,
+    tipo: row[12] as TipoConta,
+    forma_pagamento: row[13] as string,
+    observacoes: row[14] as string | null,
+    data_criacao: row[15] as string,
+  };
+
+  const resCount = db.exec('SELECT COUNT(*) FROM parcelas WHERE conta_id = ?;', [contaId]);
+  const qtdParcelas = (resCount[0]?.values[0]?.[0] as number) || 0;
+
+  db.run('BEGIN TRANSACTION;');
+  try {
+    if (qtdParcelas <= 1) {
+      // Exclui a parcela e a conta dentro da transação
+      db.run('DELETE FROM parcelas WHERE id = ?;', [parcelaId]);
+      db.run('DELETE FROM contas WHERE id = ?;', [contaId]);
+      db.run('COMMIT;');
+      await persistirDb();
+      return {
+        tipoExclusao: 'conta',
+        conta: contaObj,
+        parcelas: [parcelaObj],
+      };
+    } else {
+      // Exclui apenas esta parcela e atualiza o total da conta
+      db.run('DELETE FROM parcelas WHERE id = ?;', [parcelaId]);
+      db.run(
+        `UPDATE contas 
+         SET valor_total = (SELECT COALESCE(SUM(valor), 0) FROM parcelas WHERE conta_id = ?)
+         WHERE id = ?;`,
+        [contaId, contaId]
+      );
+      db.run('COMMIT;');
+      await persistirDb();
+      return {
+        tipoExclusao: 'parcela',
+        conta: contaObj,
+        parcelas: [parcelaObj],
+      };
+    }
+  } catch (err: any) {
+    try { db.run('ROLLBACK;'); } catch {}
+    throw formatarErroAmigavel(err);
+  }
+}
+
+/**
+ * Exclui a conta inteira e todas as suas parcelas dentro de uma única transação,
+ * apagando as parcelas antes da conta para manter a integridade referencial.
+ */
+export async function excluirContaInteiraTransacao(contaId: number): Promise<DadosRestauracaoExclusao> {
+  const db = await getDb();
+  db.run('PRAGMA foreign_keys = ON;');
+
+  const resConta = db.exec('SELECT id, descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao FROM contas WHERE id = ?;', [contaId]);
+  if (!resConta[0]?.values?.length) {
+    throw new Error('A conta selecionada para exclusão não foi encontrada.');
+  }
+  const r = resConta[0].values[0];
+  const contaObj = {
+    id: r[0] as number,
+    descricao: r[1] as string,
+    categoria_id: r[2] as number,
+    valor_total: r[3] as number,
+    tipo: r[4] as TipoConta,
+    forma_pagamento: r[5] as string,
+    observacoes: r[6] as string | null,
+    data_criacao: r[7] as string,
+  };
+
+  const resParc = db.exec(`
+    SELECT id, conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago
+    FROM parcelas
+    WHERE conta_id = ?;
+  `, [contaId]);
+
+  const parcelasObj: Parcela[] = (resParc[0]?.values || []).map((row) => ({
+    id: row[0] as number,
+    conta_id: row[1] as number,
+    numero_parcela: row[2] as number,
+    total_parcelas: row[3] as number,
+    valor: row[4] as number,
+    data_vencimento: row[5] as string,
+    data_pagamento: row[6] as string | null,
+    status: row[7] as any,
+    valor_pago: row[8] as number | null,
+    conta_descricao: contaObj.descricao,
+  }));
+
+  db.run('BEGIN TRANSACTION;');
+  try {
+    // Exclui as parcelas antes da conta para não violar a chave estrangeira
+    db.run('DELETE FROM parcelas WHERE conta_id = ?;', [contaId]);
+    db.run('DELETE FROM contas WHERE id = ?;', [contaId]);
+    db.run('COMMIT;');
+    await persistirDb();
+
+    return {
+      tipoExclusao: 'conta',
+      conta: contaObj,
+      parcelas: parcelasObj,
+    };
+  } catch (err: any) {
+    try { db.run('ROLLBACK;'); } catch {}
+    throw formatarErroAmigavel(err);
+  }
+}
+
+/**
+ * Restaura uma exclusão (desfazer) re-inserindo a conta e suas parcelas originais
+ */
+export async function restaurarExclusao(dados: DadosRestauracaoExclusao): Promise<void> {
+  const db = await getDb();
+  db.run('PRAGMA foreign_keys = OFF;');
+
+  db.run('BEGIN TRANSACTION;');
+  try {
+    db.run(`
+      INSERT OR REPLACE INTO contas (id, descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    `, [
+      dados.conta.id,
+      dados.conta.descricao,
+      dados.conta.categoria_id,
+      dados.conta.valor_total,
+      dados.conta.tipo,
+      dados.conta.forma_pagamento,
+      dados.conta.observacoes || null,
+      dados.conta.data_criacao,
+    ]);
+
+    for (const p of dados.parcelas) {
+      db.run(`
+        INSERT OR REPLACE INTO parcelas (id, conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+      `, [
+        p.id,
+        p.conta_id,
+        p.numero_parcela,
+        p.total_parcelas,
+        p.valor,
+        p.data_vencimento,
+        p.data_pagamento || null,
+        p.status,
+        p.valor_pago || null,
+      ]);
+    }
+
+    db.run('COMMIT;');
+    db.run('PRAGMA foreign_keys = ON;');
+    atualizarStatusAtrasados(db);
+    await persistirDb();
+  } catch (err: any) {
+    try { db.run('ROLLBACK;'); } catch {}
+    db.run('PRAGMA foreign_keys = ON;');
+    throw formatarErroAmigavel(err);
+  }
 }
 
 export async function atualizarConta(
