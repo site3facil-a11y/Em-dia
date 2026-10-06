@@ -38,6 +38,33 @@ function calcularDataVencimento(dataBaseStr: string, mesesAAvancar: number): str
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/**
+ * Calcula vencimentos futuros de acordo com a periodicidade escolhida
+ */
+function calcularDataComFrequencia(
+  dataBaseStr: string,
+  indice: number,
+  frequencia: 'mensal' | 'anual' | 'semanal' | 'quinzenal' = 'mensal'
+): string {
+  if (frequencia === 'mensal') {
+    return calcularDataVencimento(dataBaseStr, indice);
+  }
+  if (frequencia === 'anual') {
+    return calcularDataVencimento(dataBaseStr, indice * 12);
+  }
+  const [anoStr, mesStr, diaStr] = dataBaseStr.split('-');
+  const base = new Date(parseInt(anoStr, 10), parseInt(mesStr, 10) - 1, parseInt(diaStr, 10));
+  if (frequencia === 'semanal') {
+    base.setDate(base.getDate() + indice * 7);
+  } else if (frequencia === 'quinzenal') {
+    base.setDate(base.getDate() + indice * 14);
+  }
+  const yyyy = base.getFullYear();
+  const mm = String(base.getMonth() + 1).padStart(2, '0');
+  const dd = String(base.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 // ==========================================
 // CATEGORIAS
 // ==========================================
@@ -127,6 +154,7 @@ export interface NovaContaInput {
   observacoes?: string;
   data_primeiro_vencimento: string; // YYYY-MM-DD
   numero_parcelas?: number; // Para parceladas
+  frequencia_recorrencia?: 'mensal' | 'anual' | 'semanal' | 'quinzenal';
 }
 
 export async function criarConta(input: NovaContaInput): Promise<number> {
@@ -185,14 +213,15 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
         [contaId, input.valor_total, input.data_primeiro_vencimento, status]
       );
     } else if (input.tipo === 'recorrente') {
-      // 12 meses futuros
-      for (let i = 0; i < 12; i++) {
-        const dataVenc = calcularDataVencimento(input.data_primeiro_vencimento, i);
+      const freq = input.frequencia_recorrencia || 'mensal';
+      const qtdParcelas = freq === 'anual' ? 5 : (freq === 'semanal' ? 12 : (freq === 'quinzenal' ? 12 : 12));
+      for (let i = 0; i < qtdParcelas; i++) {
+        const dataVenc = calcularDataComFrequencia(input.data_primeiro_vencimento, i, freq);
         const status = dataVenc < hoje ? 'atrasado' : 'pendente';
         db.run(
           `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-           VALUES (?, ?, 12, ?, ?, NULL, ?, NULL);`,
-          [contaId, i + 1, input.valor_total, dataVenc, status]
+           VALUES (?, ?, ?, ?, ?, NULL, ?, NULL);`,
+          [contaId, i + 1, qtdParcelas, input.valor_total, dataVenc, status]
         );
       }
     } else if (input.tipo === 'parcelada') {
@@ -729,7 +758,7 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
   const db = await getDb();
   atualizarStatusAtrasados(db);
 
-  // Busca todas as contas do tipo 'parcelada'
+  // 1. Busca todas as contas do tipo 'parcelada'
   const sqlContas = `
     SELECT 
       c.id AS conta_id,
@@ -747,40 +776,54 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
   `;
 
   const stmtContas = db.prepare(sqlContas);
-  const parcelamentos: ParcelamentoItem[] = [];
+  const contas: {
+    conta_id: number;
+    descricao: string;
+    categoria_id: number;
+    categoria_nome: string;
+    categoria_cor: string;
+    forma_pagamento: string;
+    tipo: TipoConta;
+    valor_total: number;
+  }[] = [];
 
   while (stmtContas.step()) {
-    const c = stmtContas.getAsObject() as {
-      conta_id: number;
-      descricao: string;
-      categoria_id: number;
-      categoria_nome: string;
-      categoria_cor: string;
-      forma_pagamento: string;
-      tipo: TipoConta;
-      valor_total: number;
-    };
+    contas.push(stmtContas.getAsObject() as any);
+  }
+  stmtContas.free();
 
-    // Busca parcelas dessa conta
-    const stmtParcelas = db.prepare(`
-      SELECT 
-        id, conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago
-      FROM parcelas 
-      WHERE conta_id = ?
-      ORDER BY numero_parcela ASC;
-    `);
-    stmtParcelas.bind([c.conta_id]);
+  if (contas.length === 0) {
+    return [];
+  }
 
-    const parcelas: Parcela[] = [];
+  // 2. Busca todas as parcelas dessas contas em UMA ÚNICA consulta consolidada (Elimina o problema N+1)
+  const stmtTodasParcelas = db.prepare(`
+    SELECT 
+      p.id, p.conta_id, p.numero_parcela, p.total_parcelas, p.valor, p.data_vencimento, p.data_pagamento, p.status, p.valor_pago
+    FROM parcelas p
+    INNER JOIN contas c ON p.conta_id = c.id
+    WHERE c.tipo = 'parcelada'
+    ORDER BY p.conta_id DESC, p.numero_parcela ASC;
+  `);
+
+  const parcelasPorConta = new Map<number, Parcela[]>();
+  while (stmtTodasParcelas.step()) {
+    const p = stmtTodasParcelas.getAsObject() as unknown as Parcela;
+    const lista = parcelasPorConta.get(p.conta_id) || [];
+    lista.push(p);
+    parcelasPorConta.set(p.conta_id, lista);
+  }
+  stmtTodasParcelas.free();
+
+  // 3. Monta os itens consolidados em memória O(N)
+  const parcelamentos: ParcelamentoItem[] = contas.map((c) => {
+    const parcelas = parcelasPorConta.get(c.conta_id) || [];
     let parcelasPagas = 0;
     let valorPago = 0;
     let proximoVencimento: string | null = null;
     let temAtraso = false;
 
-    while (stmtParcelas.step()) {
-      const p = stmtParcelas.getAsObject() as unknown as Parcela;
-      parcelas.push(p);
-
+    for (const p of parcelas) {
       if (p.status === 'pago') {
         parcelasPagas++;
         valorPago += p.valor_pago || p.valor;
@@ -793,7 +836,6 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
         }
       }
     }
-    stmtParcelas.free();
 
     const totalParcelas = parcelas.length || 1;
     const saldoRestante = Math.max(0, c.valor_total - valorPago);
@@ -805,7 +847,7 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       statusGeral = 'com_atraso';
     }
 
-    parcelamentos.push({
+    return {
       conta_id: c.conta_id,
       descricao: c.descricao,
       categoria_id: c.categoria_id,
@@ -821,9 +863,8 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       proximo_vencimento: proximoVencimento,
       status_geral: statusGeral,
       parcelas,
-    });
-  }
-  stmtContas.free();
+    };
+  });
 
   return parcelamentos;
 }
@@ -1023,18 +1064,40 @@ export async function obterMetricasDashboard(mesAnoRef?: string): Promise<Dashbo
     });
   }
 
-  // 8. Lista dos próximos vencimentos (até 6 parcelas não pagas a partir de hoje ou atrasadas)
-  const proximosVencimentos = await listarParcelas({
-    status: 'pendente',
-    ordenacao: 'vencimento_asc',
-  });
+  // 8. Lista dos próximos vencimentos (LIMIT 6 direto no SQLite para máxima performance)
+  const stmtDestaque = db.prepare(`
+    SELECT 
+      p.id,
+      p.conta_id,
+      p.numero_parcela,
+      p.total_parcelas,
+      p.valor,
+      p.data_vencimento,
+      p.data_pagamento,
+      p.status,
+      p.valor_pago,
+      c.descricao AS conta_descricao,
+      c.categoria_id,
+      cat.nome AS categoria_nome,
+      cat.cor AS categoria_cor,
+      c.tipo AS tipo_conta,
+      c.forma_pagamento,
+      c.observacoes
+    FROM parcelas p
+    INNER JOIN contas c ON p.conta_id = c.id
+    INNER JOIN categorias cat ON c.categoria_id = cat.id
+    WHERE p.status IN ('atrasado', 'pendente')
+    ORDER BY 
+      CASE WHEN p.status = 'atrasado' THEN 0 ELSE 1 END,
+      p.data_vencimento ASC
+    LIMIT 6;
+  `);
 
-  const atrasadas = await listarParcelas({
-    status: 'atrasado',
-    ordenacao: 'vencimento_asc',
-  });
-
-  const listaDestaque = [...atrasadas, ...proximosVencimentos].slice(0, 6);
+  const listaDestaque: Parcela[] = [];
+  while (stmtDestaque.step()) {
+    listaDestaque.push(stmtDestaque.getAsObject() as unknown as Parcela);
+  }
+  stmtDestaque.free();
 
   return {
     totalPagoMes,

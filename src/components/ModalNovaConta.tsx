@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { X, PlusCircle, AlertCircle, Calendar } from 'lucide-react';
+import { X, PlusCircle, AlertCircle, Calendar, Layers, Repeat, Bell } from 'lucide-react';
 import { Categoria, TipoConta } from '../types';
 import { NovaContaInput } from '../db/repository';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
+import { definirLembrete, solicitarPermissaoNotificacao, verificarPermissaoNotificacao } from '../utils/lembretes';
 
 interface ModalNovaContaProps {
   aberto: boolean;
   onFechar: () => void;
   categorias: Categoria[];
-  onSalvar: (conta: NovaContaInput) => Promise<void>;
+  onSalvar: (conta: NovaContaInput) => Promise<number | void>;
 }
 
 export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
@@ -21,8 +22,9 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [valorTotalStr, setValorTotalStr] = useState('');
   const [tipo, setTipo] = useState<TipoConta>('unica');
   const [numeroParcelas, setNumeroParcelas] = useState<number>(2);
+  const [frequencia, setFrequencia] = useState<'mensal' | 'anual' | 'semanal' | 'quinzenal'>('mensal');
   const [dataVencimento, setDataVencimento] = useState(getHojeString());
-  const [formaPagamento, setFormaPagamento] = useState('Geral');
+  const [lembreteAtivo, setLembreteAtivo] = useState(false);
   const [observacoes, setObservacoes] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -59,16 +61,22 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
     try {
       setSalvando(true);
       setErro(null);
-      await onSalvar({
+      const novoId = await onSalvar({
         descricao: descricao.trim(),
         categoria_id: categoriaFinalId,
         valor_total: valorTotalNum,
         tipo,
-        forma_pagamento: formaPagamento.trim() || 'Geral',
+        forma_pagamento: 'Geral',
         observacoes: observacoes.trim() || undefined,
         data_primeiro_vencimento: dataVencimento,
-        numero_parcelas: tipo === 'parcelada' ? numeroParcelas : (tipo === 'recorrente' ? 12 : 1),
+        numero_parcelas: tipo === 'parcelada' ? numeroParcelas : (tipo === 'recorrente' ? (frequencia === 'anual' ? 5 : 12) : 1),
+        frequencia_recorrencia: tipo === 'recorrente' ? frequencia : undefined,
       });
+
+      if (typeof novoId === 'number' && novoId > 0 && lembreteAtivo) {
+        definirLembrete(novoId, true);
+      }
+
       onFechar();
     } catch (err: any) {
       setErro(err?.message || 'Falha ao gravar conta no SQLite.');
@@ -103,7 +111,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
           </button>
         </div>
 
-        {/* Formulário Simples (Sem categoria e sem observação) */}
+        {/* Formulário Direto e Limpo */}
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           {erro && (
             <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
@@ -127,99 +135,29 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
             />
           </div>
 
-          {/* Valor Total */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Valor Total (R$) *
-            </label>
-            <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                R$
-              </span>
-              <input
-                type="text"
-                required
-                placeholder="0,00"
-                value={valorTotalStr}
-                onChange={(e) => setValorTotalStr(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
-            </div>
-          </div>
-
-          {/* Tipo de Pagamento: Única, Parcelada, Recorrente */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              Tipo de Pagamento *
-            </label>
-            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-              <button
-                type="button"
-                onClick={() => setTipo('unica')}
-                className={`py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                  tipo === 'unica'
-                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                }`}
-              >
-                Única (1x)
-              </button>
-              <button
-                type="button"
-                onClick={() => setTipo('parcelada')}
-                className={`py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                  tipo === 'parcelada'
-                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                }`}
-              >
-                Parcelada
-              </button>
-              <button
-                type="button"
-                onClick={() => setTipo('recorrente')}
-                className={`py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                  tipo === 'recorrente'
-                    ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                }`}
-              >
-                Recorrente
-              </button>
-            </div>
-          </div>
-
-          {/* Linha: Número de Parcelas (se parcelada) e Data de Vencimento */}
-          <div className={`grid ${tipo === 'parcelada' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3`}>
-            {tipo === 'parcelada' && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Número de Parcelas *
-                  </label>
-                  <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
-                    {numeroParcelas}x
-                  </span>
-                </div>
-                <input
-                  type="number"
-                  min="2"
-                  max="120"
-                  required
-                  value={numeroParcelas}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    setNumeroParcelas(isNaN(val) ? 2 : Math.max(2, Math.min(120, val)));
-                  }}
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                  placeholder="12"
-                />
-                <span className="text-[10px] text-slate-400 block mt-1">
-                  Ex: 12 parcelas mensais de {formatarMoeda(valorTotalNum > 0 ? valorTotalNum / Math.max(1, numeroParcelas) : 0)}
+          {/* Linha: Valor Total e Data de Vencimento */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Valor Total */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                {tipo === 'parcelada' ? 'Valor Total da Compra (R$) *' : 'Valor a Pagar (R$) *'}
+              </label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                  R$
                 </span>
+                <input
+                  type="text"
+                  required
+                  placeholder="0,00"
+                  value={valorTotalStr}
+                  onChange={(e) => setValorTotalStr(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
               </div>
-            )}
+            </div>
 
+            {/* Data de Vencimento */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 {tipo === 'parcelada' ? 'Primeiro Vencimento *' : 'Data de Vencimento *'}
@@ -231,63 +169,197 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
                 onChange={(e) => setDataVencimento(e.target.value)}
                 className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
               />
-              <span className="text-[10px] text-slate-400 block mt-1">
-                {tipo === 'recorrente' ? 'Dia do vencimento a cada mês' : 'Data do pagamento'}
-              </span>
             </div>
           </div>
 
-          {/* Forma de Pagamento e Observações */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Forma de Pagamento
-              </label>
-              <input
-                type="text"
-                placeholder="Ex: Geral, Cartão, Dinheiro..."
-                value={formaPagamento}
-                onChange={(e) => setFormaPagamento(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
-            </div>
+          {/* Opções Opcionais: Parcelar ou Repetir (Por padrão é pagamento único à vista) */}
+          <div className="pt-1">
+            <span className="block text-[11px] font-semibold text-slate-400 dark:text-slate-500 mb-1.5">
+              Condição de pagamento (opcional):
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTipo(tipo === 'parcelada' ? 'unica' : 'parcelada')}
+                className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  tipo === 'parcelada'
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Parcelar compra</span>
+              </button>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Observações (opcional)
-              </label>
-              <input
-                type="text"
-                placeholder="Ex: Código de barras, notas..."
-                value={observacoes}
-                onChange={(e) => setObservacoes(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
+              <button
+                type="button"
+                onClick={() => setTipo(tipo === 'recorrente' ? 'unica' : 'recorrente')}
+                className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  tipo === 'recorrente'
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750'
+                }`}
+              >
+                <Repeat className="w-3.5 h-3.5" />
+                <span>Conta Fixa / Recorrente</span>
+              </button>
             </div>
           </div>
 
-          {/* Resumo Dinâmico do Pagamento */}
-          <div className="p-3.5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-blue-900 dark:text-blue-200 space-y-1">
-            <div className="font-bold flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-blue-700 dark:text-blue-400" />
-              <span>Resumo do Pagamento:</span>
+          {/* Painel Expansível: Opções de Parcelamento */}
+          {tipo === 'parcelada' && (
+            <div className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 space-y-2 animate-in fade-in">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-blue-950 dark:text-blue-200">
+                  Número de Parcelas *
+                </label>
+                <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400 font-mono">
+                  {numeroParcelas}x de {formatarMoeda(valorTotalNum > 0 ? valorTotalNum / Math.max(1, numeroParcelas) : 0)}
+                </span>
+              </div>
+              <input
+                type="number"
+                min="2"
+                max="120"
+                required
+                value={numeroParcelas}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setNumeroParcelas(isNaN(val) ? 2 : Math.max(2, Math.min(120, val)));
+                }}
+                className="w-full bg-white dark:bg-slate-800 border border-blue-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                placeholder="12"
+              />
+              <p className="text-[11px] text-blue-800/80 dark:text-blue-300">
+                Serão geradas <strong>{numeroParcelas} parcelas mensais</strong> de ~{formatarMoeda(valorTotalNum > 0 ? valorTotalNum / Math.max(1, numeroParcelas) : 0)} a partir de {formatarData(dataVencimento)}.
+              </p>
             </div>
-            {tipo === 'unica' && (
-              <p>
-                Será gerado <strong>1 pagamento único de {formatarMoeda(valorTotalNum)}</strong> com vencimento em{' '}
-                <strong>{formatarData(dataVencimento)}</strong>.
+          )}
+
+          {/* Painel Expansível: Opções de Recorrência (Frequência) */}
+          {tipo === 'recorrente' && (
+            <div className="p-3.5 rounded-2xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 space-y-2.5 animate-in fade-in">
+              <label className="block text-xs font-bold text-blue-950 dark:text-blue-200">
+                Periodicidade da Recorrência *
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setFrequencia('mensal')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all cursor-pointer text-center ${
+                    frequencia === 'mensal'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  Mensal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrequencia('anual')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all cursor-pointer text-center ${
+                    frequencia === 'anual'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  Anual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrequencia('quinzenal')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all cursor-pointer text-center ${
+                    frequencia === 'quinzenal'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  Quinzenal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFrequencia('semanal')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl border transition-all cursor-pointer text-center ${
+                    frequencia === 'semanal'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  Semanal
+                </button>
+              </div>
+              <p className="text-[11px] text-blue-800/80 dark:text-blue-300">
+                {frequencia === 'mensal' && `Repete a cada mês no dia ${dataVencimento.slice(8)} (12 meses programados).`}
+                {frequencia === 'anual' && `Repete uma vez por ano nesta data (ex: IPTU, IPVA, seguros).`}
+                {frequencia === 'quinzenal' && `Repete a cada 14 dias (12 quinzenas programadas).`}
+                {frequencia === 'semanal' && `Repete a cada 7 dias (12 semanas programadas).`}
               </p>
-            )}
-            {tipo === 'parcelada' && (
-              <p>
-                Serão geradas <strong>{numeroParcelas} parcelas de ~{formatarMoeda(valorTotalNum / Math.max(1, numeroParcelas))}</strong>, iniciando em <strong>{formatarData(dataVencimento)}</strong> (total: {formatarMoeda(valorTotalNum)}).
-              </p>
-            )}
-            {tipo === 'recorrente' && (
-              <p>
-                Serão gerados <strong>12 pagamentos mensais de {formatarMoeda(valorTotalNum)}</strong> (conta fixa/assinatura), iniciando em <strong>{formatarData(dataVencimento)}</strong>.
-              </p>
-            )}
+            </div>
+          )}
+
+          {/* Observações (Opcional - largura total) */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Observações (opcional)
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: Código de barras, notas..."
+              value={observacoes}
+              onChange={(e) => setObservacoes(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            />
+          </div>
+
+          {/* Opção de Lembrete Individual (Apenas para as contas que o usuário escolher) */}
+          <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                  lembreteAtivo
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'
+                }`}
+              >
+                <Bell className={`w-4 h-4 ${lembreteAtivo ? 'fill-white' : ''}`} />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                  Lembrar no dia do vencimento
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {lembreteAtivo
+                    ? '🔔 Esta conta emitirá um alerta no dia do vencimento.'
+                    : 'Ative apenas se quiser receber lembrete desta conta.'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const novo = !lembreteAtivo;
+                if (novo) {
+                  const perm = verificarPermissaoNotificacao();
+                  if (perm === 'default') {
+                    await solicitarPermissaoNotificacao();
+                  }
+                }
+                setLembreteAtivo(novo);
+              }}
+              className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer flex items-center p-0.5 ${
+                lembreteAtivo ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+              role="switch"
+              aria-checked={lembreteAtivo}
+              aria-label="Ativar lembrete para esta conta"
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-transform ${
+                  lembreteAtivo ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
 
           {/* Ações */}

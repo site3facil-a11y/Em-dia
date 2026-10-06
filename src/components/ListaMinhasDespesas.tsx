@@ -8,10 +8,17 @@ import {
   Sparkles,
   Pencil,
   Trash2,
+  Bell,
 } from 'lucide-react';
 import { Parcela, DashboardMetrics } from '../types';
 import { formatarMoeda, formatarData, formatarMesAno } from '../utils/formatters';
 import { BarraProgressoVencimento } from './BarraProgressoVencimento';
+import {
+  obterContasComLembrete,
+  alternarLembrete,
+  solicitarPermissaoNotificacao,
+  verificarPermissaoNotificacao,
+} from '../utils/lembretes';
 
 interface ListaMinhasDespesasProps {
   parcelas: Parcela[];
@@ -39,6 +46,8 @@ interface ItemDespesaSwipeableProps {
   onVerDetalhes: (contaId: number) => void;
   reducedMotion: boolean;
   vencimentoAnterior: string | null | undefined;
+  temLembrete: boolean;
+  onToggleLembrete: (contaId: number, descricao: string) => void;
 }
 
 const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
@@ -53,6 +62,8 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
   onVerDetalhes,
   reducedMotion,
   vencimentoAnterior,
+  temLembrete,
+  onToggleLembrete,
 }) => {
   const [dragOffset, setDragOffset] = useState<number | null>(null);
   const touchStartRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -248,6 +259,12 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
                     🐷 Porquinho
                   </span>
                 )}
+                {temLembrete && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300/80 dark:border-amber-800 flex items-center gap-1 shadow-2xs">
+                    <Bell className="w-2.5 h-2.5 fill-amber-500 stroke-amber-500" />
+                    Lembrete
+                  </span>
+                )}
                 {p.total_parcelas > 1 && (
                   <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-900/50">
                     {p.numero_parcela}/{p.total_parcelas}
@@ -299,6 +316,33 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
               </span>
             </div>
 
+            {/* Botão de Lembrete Individual (Apenas para contas escolhidas) */}
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleLembrete(p.conta_id, p.conta_descricao);
+              }}
+              className={`p-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+                temLembrete
+                  ? 'text-amber-500 hover:text-amber-600 bg-amber-50 dark:bg-amber-950/60 border border-amber-200/80 dark:border-amber-900/60 shadow-2xs'
+                  : 'text-slate-300 dark:text-slate-600 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              title={
+                temLembrete
+                  ? '🔔 Lembrete ativo no vencimento (toque para desativar)'
+                  : 'Toque para ativar lembrete no vencimento desta conta'
+              }
+              aria-label={temLembrete ? 'Desativar lembrete desta conta' : 'Ativar lembrete desta conta'}
+            >
+              <Bell
+                className={`w-4 h-4 transition-transform active:scale-125 ${
+                  temLembrete ? 'fill-amber-500 stroke-amber-500' : ''
+                }`}
+              />
+            </button>
+
             {/* Seta > para abrir as opções de Editar e Excluir */}
             <button
               type="button"
@@ -347,6 +391,45 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
   const [filtroStatus, setFiltroStatus] = useState<'todas' | 'pendente' | 'pago' | 'atrasado'>('todas');
   const [cardAbertoId, setCardAbertoId] = useState<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [contasComLembrete, setContasComLembrete] = useState<Set<number>>(() => new Set(obterContasComLembrete()));
+  const [toastLembrete, setToastLembrete] = useState<string | null>(null);
+
+  useEffect(() => {
+    const sincronizar = () => {
+      setContasComLembrete(new Set(obterContasComLembrete()));
+    };
+    window.addEventListener('em-dia-lembretes-alterados', sincronizar);
+    window.addEventListener('storage', sincronizar);
+    return () => {
+      window.removeEventListener('em-dia-lembretes-alterados', sincronizar);
+      window.removeEventListener('storage', sincronizar);
+    };
+  }, []);
+
+  const handleToggleLembrete = async (contaId: number, descricao: string) => {
+    const perm = verificarPermissaoNotificacao();
+    if (perm === 'default') {
+      const concedida = await solicitarPermissaoNotificacao();
+      if (!concedida) {
+        setToastLembrete('Permissão de notificações não concedida no navegador.');
+        setTimeout(() => setToastLembrete(null), 3500);
+        return;
+      }
+    } else if (perm === 'denied') {
+      setToastLembrete('Notificações bloqueadas nas permissões do navegador.');
+      setTimeout(() => setToastLembrete(null), 3500);
+      return;
+    }
+
+    const ativo = alternarLembrete(contaId);
+    setContasComLembrete(new Set(obterContasComLembrete()));
+    setToastLembrete(
+      ativo
+        ? `🔔 Lembrete ativado para "${descricao}"!`
+        : `🔕 Lembrete desativado para "${descricao}".`
+    );
+    setTimeout(() => setToastLembrete(null), 3000);
+  };
 
   useEffect(() => {
     try {
@@ -385,11 +468,11 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
     setCardAbertoId(null);
   };
 
-  // Filtragem das parcelas
-  const parcelasFiltradas = parcelas.filter((p) => {
-    if (filtroStatus === 'todas') return true;
-    return p.status === filtroStatus;
-  });
+  // Filtragem das parcelas memoizada para evitar recalculos durante gestos de swipe
+  const parcelasFiltradas = useMemo(() => {
+    if (filtroStatus === 'todas') return parcelas;
+    return parcelas.filter((p) => p.status === filtroStatus);
+  }, [parcelas, filtroStatus]);
 
   // Mapeia vencimentos das parcelas para encontrar a parcela anterior da mesma conta
   const mapaVencimentoAnterior = useMemo(() => {
@@ -574,9 +657,19 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
                 onVerDetalhes={onVerDetalhes}
                 reducedMotion={reducedMotion}
                 vencimentoAnterior={vencimentoAnterior}
+                temLembrete={contasComLembrete.has(p.conta_id)}
+                onToggleLembrete={handleToggleLembrete}
               />
             );
           })}
+        </div>
+      )}
+
+      {/* Toast flutuante de confirmação do lembrete */}
+      {toastLembrete && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold border border-white/10 dark:border-slate-800 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-none">
+          <Bell className="w-4 h-4 text-amber-400 dark:text-amber-600 fill-amber-400 dark:fill-amber-600" />
+          <span>{toastLembrete}</span>
         </div>
       )}
 

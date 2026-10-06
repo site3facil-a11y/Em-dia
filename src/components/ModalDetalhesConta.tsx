@@ -1,8 +1,14 @@
-import React from 'react';
-import { X, Layers, Check, RotateCcw, Calendar, CreditCard, Tag } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Layers, Check, RotateCcw, Calendar, CreditCard, Tag, Bell } from 'lucide-react';
 import { Parcela } from '../types';
 import { formatarMoeda, formatarData, getStatusInfo } from '../utils/formatters';
 import { BarraProgressoVencimento } from './BarraProgressoVencimento';
+import {
+  temLembrete,
+  alternarLembrete,
+  verificarPermissaoNotificacao,
+  solicitarPermissaoNotificacao,
+} from '../utils/lembretes';
 
 interface ModalDetalhesContaProps {
   aberto: boolean;
@@ -22,6 +28,21 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   if (!aberto || parcelas.length === 0) return null;
 
   const primeira = parcelas[0];
+  const [lembreteAtivo, setLembreteAtivo] = useState(() => temLembrete(primeira.conta_id));
+
+  useEffect(() => {
+    setLembreteAtivo(temLembrete(primeira.conta_id));
+  }, [primeira.conta_id]);
+
+  const handleToggleLembrete = async () => {
+    const perm = verificarPermissaoNotificacao();
+    if (perm === 'default') {
+      await solicitarPermissaoNotificacao();
+    }
+    const novo = alternarLembrete(primeira.conta_id);
+    setLembreteAtivo(novo);
+  };
+
   const totalConta = parcelas.reduce((acc, p) => acc + p.valor, 0);
   const totalPago = parcelas
     .filter((p) => p.status === 'pago')
@@ -52,12 +73,28 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onFechar}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleLembrete}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                lembreteAtivo
+                  ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-2xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-amber-600'
+              }`}
+              title="Alternar lembrete no dia do vencimento"
+            >
+              <Bell className={`w-3.5 h-3.5 ${lembreteAtivo ? 'fill-amber-500 stroke-amber-500' : ''}`} />
+              <span>{lembreteAtivo ? 'Lembrete Ativo' : 'Ativar Lembrete'}</span>
+            </button>
+
+            <button
+              onClick={onFechar}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Resumo Financeiro da Conta */}

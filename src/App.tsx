@@ -51,6 +51,7 @@ import {
   DadosRestauracaoExclusao,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
+import { verificarAlertasVencimentoHoje } from './utils/lembretes';
 
 export default function App() {
   // Modo Escuro
@@ -96,30 +97,51 @@ export default function App() {
   const [detalhesContaParcelas, setDetalhesContaParcelas] = useState<Parcela[] | null>(null);
   const [exclusaoPendente, setExclusaoPendente] = useState<{ contaId: number; descricao: string } | null>(null);
 
-  const carregarDados = useCallback(async () => {
+  const carregarParcelamentos = useCallback(async () => {
+    try {
+      const parts = await listarParcelamentos();
+      setParcelamentos(parts);
+    } catch (error) {
+      console.error('Erro ao consultar parcelamentos:', error);
+    }
+  }, []);
+
+  const carregarDados = useCallback(async (atualizarParcelamentos = false) => {
     try {
       setCarregando(true);
-      const [cats, parcs, parts, mets] = await Promise.all([
+      const promessas: [Promise<Categoria[]>, Promise<Parcela[]>, Promise<DashboardMetrics>, Promise<ParcelamentoItem[] | null>] = [
         listarCategorias(),
         listarParcelas({ mesAno: mesSelecionado, ordenacao: 'vencimento_asc' }),
-        listarParcelamentos(),
         obterMetricasDashboard(mesSelecionado),
-      ]);
+        atualizarParcelamentos || abaAtiva === 'parcelas' ? listarParcelamentos() : Promise.resolve(null),
+      ];
+
+      const [cats, parcs, mets, parts] = await Promise.all(promessas);
 
       setCategorias(cats);
       setParcelas(parcs);
-      setParcelamentos(parts);
       setMetricas(mets);
+      if (parts) {
+        setParcelamentos(parts);
+      }
+      // Verifica e emite notificações locais para contas com lembrete que vencem hoje
+      verificarAlertasVencimentoHoje(parcs);
     } catch (error) {
       console.error('Erro ao consultar banco SQLite:', error);
     } finally {
       setCarregando(false);
     }
-  }, [mesSelecionado]);
+  }, [mesSelecionado, abaAtiva]);
 
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  useEffect(() => {
+    if (abaAtiva === 'parcelas') {
+      carregarParcelamentos();
+    }
+  }, [abaAtiva, carregarParcelamentos]);
 
   // Ações de Pagamento
   const handlePagarParcelaRapido = async (parcela: Parcela) => {
@@ -148,9 +170,10 @@ export default function App() {
     }
   };
 
-  const handleSalvarNovaConta = async (input: NovaContaInput) => {
-    await criarConta(input);
-    await carregarDados();
+  const handleSalvarNovaConta = async (input: NovaContaInput): Promise<number> => {
+    const id = await criarConta(input);
+    await carregarDados(true);
+    return id;
   };
 
   const handleVerDetalhesConta = async (contaId: number) => {

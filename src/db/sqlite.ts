@@ -249,6 +249,9 @@ export function criarSchema(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_parcelas_vencimento ON parcelas(data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_parcelas_status ON parcelas(status);
     CREATE INDEX IF NOT EXISTS idx_parcelas_conta ON parcelas(conta_id);
+    CREATE INDEX IF NOT EXISTS idx_parcelas_venc_status ON parcelas(data_vencimento, status);
+    CREATE INDEX IF NOT EXISTS idx_contas_tipo ON contas(tipo);
+    CREATE INDEX IF NOT EXISTS idx_contas_categoria ON contas(categoria_id);
   `);
 }
 
@@ -464,19 +467,65 @@ export function resetDbPromise() {
   initPromise = null;
 }
 
+let persistTimer: any = null;
+let pendingPersistResolve: (() => void)[] = [];
+
 /**
- * Persiste o banco atual no IndexedDB
+ * Persiste o banco atual no IndexedDB com debounce de 150ms
+ * Agrupa alterações rápidas sucessivas, economizando CPU, bateria e I/O de disco
  */
 export async function persistirDb(): Promise<void> {
   if (!dbInstance) return;
-  const data = dbInstance.export();
-  await salvarNoIndexedDB(data);
+  return new Promise<void>((resolve) => {
+    pendingPersistResolve.push(resolve);
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+    }
+    persistTimer = setTimeout(async () => {
+      persistTimer = null;
+      const callbacks = pendingPersistResolve;
+      pendingPersistResolve = [];
+      try {
+        if (dbInstance) {
+          const data = dbInstance.export();
+          await salvarNoIndexedDB(data);
+        }
+      } catch (err) {
+        console.warn('Aviso: erro ao persistir banco no IndexedDB:', err);
+      } finally {
+        callbacks.forEach((cb) => cb());
+      }
+    }, 150);
+  });
+}
+
+/**
+ * Força a gravação imediata sem esperar o timer (usado antes de exportar arquivo)
+ */
+export async function persistirDbImediato(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const callbacks = pendingPersistResolve;
+  pendingPersistResolve = [];
+  try {
+    if (dbInstance) {
+      const data = dbInstance.export();
+      await salvarNoIndexedDB(data);
+    }
+  } catch (err) {
+    console.warn('Aviso: erro ao persistir banco imediatamente:', err);
+  } finally {
+    callbacks.forEach((cb) => cb());
+  }
 }
 
 /**
  * Exporta o arquivo binário .sqlite para download no navegador
  */
 export async function exportarArquivoSqlite(): Promise<void> {
+  await persistirDbImediato();
   const db = await getDb();
   const binaryArray = db.export();
   const blob = new Blob([binaryArray.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
