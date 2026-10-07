@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { X, Edit3, AlertCircle, Info, Calendar } from 'lucide-react';
+import { X, Edit3, AlertCircle, Info, Calendar, Bell } from 'lucide-react';
 import { Categoria, Parcela } from '../types';
 import { EditarParcelaInput } from '../db/repository';
+import {
+  temLembrete,
+  definirLembrete,
+  verificarPermissaoNotificacao,
+  solicitarPermissaoNotificacao,
+} from '../utils/lembretes';
 
 interface ModalEditarParcelaProps {
   aberto: boolean;
@@ -24,6 +30,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   const [dataVencimento, setDataVencimento] = useState('');
   const [formaPagamento, setFormaPagamento] = useState('Geral');
   const [observacoes, setObservacoes] = useState('');
+  const [lembreteAtivo, setLembreteAtivo] = useState(false);
   const [escopo, setEscopo] = useState<'apenas_esta' | 'esta_e_proximas'>('apenas_esta');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -36,6 +43,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
       setDataVencimento(parcela.data_vencimento);
       setFormaPagamento(parcela.forma_pagamento || 'Geral');
       setObservacoes(parcela.observacoes || '');
+      setLembreteAtivo(temLembrete(parcela.conta_id));
       setEscopo('apenas_esta');
       setErro(null);
     }
@@ -85,6 +93,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
         observacoes: observacoes.trim() || undefined,
         escopo,
       });
+      definirLembrete(parcela.conta_id, lembreteAtivo);
       onFechar();
     } catch (err: any) {
       setErro(err?.message || 'Falha ao salvar alterações.');
@@ -165,6 +174,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
               </span>
               <input
                 type="text"
+                inputMode="decimal"
                 required
                 disabled={isPaga}
                 value={valorStr}
@@ -217,6 +227,57 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
               onChange={(e) => setObservacoes(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
             />
+          </div>
+
+          {/* Opção de Lembrete Individual (Apenas para contas escolhidas) */}
+          <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+                  lembreteAtivo
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'
+                }`}
+              >
+                <Bell className={`w-4 h-4 ${lembreteAtivo ? 'fill-white' : ''}`} />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                  Lembrar no dia do vencimento
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {lembreteAtivo
+                    ? '🔔 Esta conta emitirá um alerta no dia do vencimento.'
+                    : 'Ative apenas se quiser receber lembrete desta conta.'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const novo = !lembreteAtivo;
+                if (novo) {
+                  const perm = verificarPermissaoNotificacao();
+                  if (perm === 'default') {
+                    await solicitarPermissaoNotificacao();
+                  }
+                }
+                setLembreteAtivo(novo);
+              }}
+              className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer flex items-center p-0.5 ${
+                lembreteAtivo ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+              role="switch"
+              aria-checked={lembreteAtivo}
+              aria-label="Ativar lembrete para esta conta"
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-md transform transition-transform ${
+                  lembreteAtivo ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
 
           {/* Escopo da Alteração para Parceladas ou Recorrentes */}

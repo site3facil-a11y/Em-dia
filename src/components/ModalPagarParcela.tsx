@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Check, DollarSign, Calendar, AlertCircle } from 'lucide-react';
 import { Parcela } from '../types';
 import { formatarMoeda, formatarData, getHojeString, dispararConfetes } from '../utils/formatters';
+import { centavosParaReais, reaisParaCentavos } from '../utils/finance';
 
 interface ModalPagarParcelaProps {
   parcela: Parcela | null;
@@ -16,8 +17,9 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
 }) => {
   if (!parcela) return null;
 
+  const valorPrevistoReais = centavosParaReais(parcela.valor);
   const [dataPagamento, setDataPagamento] = useState(getHojeString());
-  const [valorPagoStr, setValorPagoStr] = useState(parcela.valor.toFixed(2).replace('.', ','));
+  const [valorPagoStr, setValorPagoStr] = useState(valorPrevistoReais.toFixed(2).replace('.', ','));
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -37,7 +39,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
     try {
       setSalvando(true);
       setErro(null);
-      await onConfirmar(parcela.id, dataPagamento, valorPagoNum);
+      await onConfirmar(parcela.id, dataPagamento, reaisParaCentavos(valorPagoNum));
       dispararConfetes();
       onFechar();
     } catch (err: any) {
@@ -137,6 +139,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
               </span>
               <input
                 type="text"
+                inputMode="decimal"
                 required
                 value={valorPagoStr}
                 onChange={(e) => setValorPagoStr(e.target.value)}
@@ -147,27 +150,27 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
             {/* Indicador de Desconto ou Juros em tempo real */}
             {valorPagoNum > 0 && (
               <div className={`mt-2 p-2.5 rounded-xl border text-xs flex items-center justify-between ${
-                Number((parcela.valor - valorPagoNum).toFixed(2)) > 0
+                Number((valorPrevistoReais - valorPagoNum).toFixed(2)) > 0
                   ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                  : Number((parcela.valor - valorPagoNum).toFixed(2)) < 0
+                  : Number((valorPrevistoReais - valorPagoNum).toFixed(2)) < 0
                   ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
                   : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
               }`}>
                 <span>
-                  {Number((parcela.valor - valorPagoNum).toFixed(2)) > 0 ? (
+                  {Number((valorPrevistoReais - valorPagoNum).toFixed(2)) > 0 ? (
                     <strong>✨ Desconto obtido:</strong>
-                  ) : Number((parcela.valor - valorPagoNum).toFixed(2)) < 0 ? (
+                  ) : Number((valorPrevistoReais - valorPagoNum).toFixed(2)) < 0 ? (
                     <strong>⚠️ Juros / Acréscimo:</strong>
                   ) : (
                     <span>Valor exato previsto:</span>
                   )}
                 </span>
                 <strong className="font-mono text-sm">
-                  {Number((parcela.valor - valorPagoNum).toFixed(2)) > 0
-                    ? `-${formatarMoeda(parcela.valor - valorPagoNum)}`
-                    : Number((parcela.valor - valorPagoNum).toFixed(2)) < 0
-                    ? `+${formatarMoeda(valorPagoNum - parcela.valor)}`
-                    : formatarMoeda(parcela.valor)}
+                  {Number((valorPrevistoReais - valorPagoNum).toFixed(2)) > 0
+                    ? `-${formatarMoeda(valorPrevistoReais - valorPagoNum)}`
+                    : Number((valorPrevistoReais - valorPagoNum).toFixed(2)) < 0
+                    ? `+${formatarMoeda(valorPagoNum - valorPrevistoReais)}`
+                    : formatarMoeda(valorPrevistoReais)}
                 </strong>
               </div>
             )}

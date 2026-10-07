@@ -1,14 +1,17 @@
 /**
  * Gerenciador do Banco de Dados SQLite em WebAssembly (sql.js)
- * com persistência automática no IndexedDB, backup de segurança e migrações resilientes
+ * com persistência automática no IndexedDB, migrações versionadas,
+ * suporte a centavos (INTEGER) e integridade relacional com transações
  */
 import initSqlJs, { Database } from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
+import { getHojeIso } from '../utils/dates';
 
 export const DB_NAME = 'contas_a_pagar_db';
 export const IDB_STORE = 'sqlite_store';
 export const IDB_KEY = 'sqlite_binary';
 export const IDB_BACKUP_KEY = 'em_dia_backup_pre_migracao';
+export const SCHEMA_VERSAO_ATUAL = 6;
 
 let dbInstance: Database | null = null;
 let initPromise: Promise<Database> | null = null;
@@ -81,9 +84,6 @@ export async function carregarDoIndexedDB(): Promise<Uint8Array | null> {
   }
 }
 
-/**
- * Guarda uma cópia de segurança dos bytes antes de qualquer migração
- */
 export async function salvarBackupPreMigracao(bytes: Uint8Array): Promise<void> {
   try {
     const idb = await openIndexedDB();
@@ -119,9 +119,6 @@ export async function carregarBackupPreMigracao(): Promise<Uint8Array | null> {
   }
 }
 
-/**
- * Verifica com PRAGMA table_info se uma coluna existe na tabela
- */
 export function colunaExiste(db: Database, tabela: string, coluna: string): boolean {
   try {
     const res = db.exec(`PRAGMA table_info(${tabela});`);
@@ -132,9 +129,6 @@ export function colunaExiste(db: Database, tabela: string, coluna: string): bool
   }
 }
 
-/**
- * Só executa ALTER TABLE ADD COLUMN após verificar que a coluna não existe
- */
 export function adicionarColunaSeNaoExistir(
   db: Database,
   tabela: string,
@@ -147,67 +141,49 @@ export function adicionarColunaSeNaoExistir(
 }
 
 /**
- * Migra com segurança para as 3 categorias padrão (Gastos, Economias, Reservas)
- * NUNCA faz DROP TABLE e NUNCA faz DELETE em categorias que tenham contas vinculadas
+ * Retorna a versão atual do schema através da tabela meta ou PRAGMA user_version
  */
-export function migrarCategoriasSeguro(db: Database) {
-  // 1. Garante existência das 3 categorias essenciais
-  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Gastos', '#2563eb');");
-  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Economias', '#10b981');");
-  db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Reservas', '#f59e0b');");
+export function obterVersaoSchema(db: Database): number {
+  try {
+    const resMeta = db.exec("SELECT valor FROM meta WHERE chave = 'schema_version';");
+    if (resMeta[0]?.values[0]?.[0]) {
+      return parseInt(String(resMeta[0].values[0][0]), 10) || 0;
+    }
+  } catch {}
 
-  const gastosRes = db.exec("SELECT id FROM categorias WHERE nome = 'Gastos';");
-  const gastosId = gastosRes[0]?.values[0]?.[0] as number;
-
-  const economiasRes = db.exec("SELECT id FROM categorias WHERE nome = 'Economias';");
-  const economiasId = economiasRes[0]?.values[0]?.[0] as number;
-
-  const reservasRes = db.exec("SELECT id FROM categorias WHERE nome = 'Reservas';");
-  const reservasId = reservasRes[0]?.values[0]?.[0] as number;
-
-  if (gastosId && economiasId && reservasId) {
-    // 2. Transfere contas com segurança
-    db.run(
-      `UPDATE contas 
-       SET categoria_id = ? 
-       WHERE categoria_id IN (
-         SELECT id FROM categorias 
-         WHERE (LOWER(nome) LIKE '%poup%' OR LOWER(nome) LIKE '%econ%') AND id != ?
-       );`,
-      [economiasId, economiasId]
-    );
-
-    db.run(
-      `UPDATE contas 
-       SET categoria_id = ? 
-       WHERE categoria_id IN (
-         SELECT id FROM categorias 
-         WHERE LOWER(nome) LIKE '%reser%' AND id != ?
-       );`,
-      [reservasId, reservasId]
-    );
-
-    db.run(
-      `UPDATE contas 
-       SET categoria_id = ? 
-       WHERE categoria_id NOT IN (?, ?, ?);`,
-      [gastosId, gastosId, economiasId, reservasId]
-    );
-
-    // 3. NUNCA apaga categorias que possuam contas vinculadas (subquery protetora)
-    db.run(
-      `DELETE FROM categorias 
-       WHERE id NOT IN (?, ?, ?) 
-         AND id NOT IN (SELECT DISTINCT categoria_id FROM contas);`,
-      [gastosId, economiasId, reservasId]
-    );
+  try {
+    const resVer = db.exec('PRAGMA user_version;');
+    return (resVer[0]?.values[0]?.[0] as number) || 0;
+  } catch {
+    return 0;
   }
 }
 
 /**
- * Cria a estrutura base do schema com CREATE TABLE IF NOT EXISTS
+ * Atualiza a versão do schema na tabela meta e no PRAGMA user_version
+ */
+export function definirVersaoSchema(db: Database, versao: number): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS meta (
+      chave TEXT PRIMARY KEY,
+      valor TEXT NOT NULL
+    );
+  `);
+  db.run("INSERT OR REPLACE INTO meta (chave, valor) VALUES ('schema_version', ?);", [String(versao)]);
+  db.run(`PRAGMA user_version = ${versao};`);
+}
+
+/**
+ * Cria a estrutura base do schema com foreign keys ativas
  */
 export function criarSchema(db: Database) {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS meta (
+      chave TEXT PRIMARY KEY,
+      valor TEXT NOT NULL
+    );
+  `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS categorias (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,11 +197,13 @@ export function criarSchema(db: Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       descricao TEXT NOT NULL,
       categoria_id INTEGER NOT NULL,
-      valor_total REAL NOT NULL,
+      valor_total INTEGER NOT NULL, -- em centavos
       tipo TEXT NOT NULL CHECK(tipo IN ('unica', 'recorrente', 'parcelada')),
-      forma_pagamento TEXT NOT NULL,
+      forma_pagamento TEXT NOT NULL DEFAULT 'Geral',
       observacoes TEXT,
       data_criacao TEXT NOT NULL,
+      frequencia_recorrencia TEXT,
+      dia_base INTEGER,
       FOREIGN KEY (categoria_id) REFERENCES categorias(id) ON DELETE RESTRICT
     );
   `);
@@ -236,15 +214,50 @@ export function criarSchema(db: Database) {
       conta_id INTEGER NOT NULL,
       numero_parcela INTEGER NOT NULL,
       total_parcelas INTEGER NOT NULL,
-      valor REAL NOT NULL,
+      valor INTEGER NOT NULL, -- em centavos
       data_vencimento TEXT NOT NULL,
       data_pagamento TEXT,
-      status TEXT NOT NULL CHECK(status IN ('pendente', 'pago', 'atrasado')),
-      valor_pago REAL,
+      status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente', 'pago')),
+      valor_pago INTEGER, -- em centavos
       FOREIGN KEY (conta_id) REFERENCES contas(id) ON DELETE CASCADE
     );
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS cofrinhos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      valor_meta INTEGER NOT NULL, -- em centavos
+      total_parcelas INTEGER NOT NULL DEFAULT 1,
+      valor_parcela INTEGER NOT NULL DEFAULT 0, -- em centavos
+      data_inicio TEXT NOT NULL,
+      concluido INTEGER NOT NULL DEFAULT 0,
+      data_criacao TEXT NOT NULL
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS cofrinho_depositos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cofrinho_id INTEGER NOT NULL,
+      valor INTEGER NOT NULL, -- em centavos (positivo = depósito, negativo = retirada)
+      data_deposito TEXT NOT NULL,
+      observacao TEXT,
+      conta_vinculada_id INTEGER,
+      FOREIGN KEY (cofrinho_id) REFERENCES cofrinhos(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS notificacoes_enviadas (
+      chave TEXT PRIMARY KEY,
+      parcela_id INTEGER,
+      data_vencimento TEXT,
+      enviada_em TEXT
+    );
+  `);
+
+  // Índices para otimização de consultas críticas
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_parcelas_vencimento ON parcelas(data_vencimento);
     CREATE INDEX IF NOT EXISTS idx_parcelas_status ON parcelas(status);
@@ -252,56 +265,172 @@ export function criarSchema(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_parcelas_venc_status ON parcelas(data_vencimento, status);
     CREATE INDEX IF NOT EXISTS idx_contas_tipo ON contas(tipo);
     CREATE INDEX IF NOT EXISTS idx_contas_categoria ON contas(categoria_id);
+    CREATE INDEX IF NOT EXISTS idx_cofrinho_depositos_cid ON cofrinho_depositos(cofrinho_id);
   `);
 }
 
 /**
- * Recria as categorias padrão caso não existam
+ * Executa as migrações numeradas sequencialmente sem perder dados
  */
+export function executarMigracoes(db: Database) {
+  // Desativa temporariamente foreign_keys para alterar schemas
+  db.run('PRAGMA foreign_keys = OFF;');
+
+  let versao = obterVersaoSchema(db);
+
+  // Se o banco existe mas meta/user_version estava zerado
+  if (versao === 0) {
+    const checkTabelas = db.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contas', 'parcelas', 'categorias');"
+    );
+    if ((checkTabelas[0]?.values?.length || 0) > 0) {
+      versao = 1;
+    }
+  }
+
+  // Cria estrutura base
+  criarSchema(db);
+
+  // Migração 1: Adição de colunas essenciais
+  if (versao < 1) {
+    adicionarColunaSeNaoExistir(db, 'contas', 'forma_pagamento', "TEXT NOT NULL DEFAULT 'Geral'");
+    adicionarColunaSeNaoExistir(db, 'contas', 'observacoes', 'TEXT');
+    adicionarColunaSeNaoExistir(db, 'contas', 'data_criacao', `TEXT NOT NULL DEFAULT '${getHojeIso()}'`);
+    adicionarColunaSeNaoExistir(db, 'contas', 'frequencia_recorrencia', 'TEXT');
+    adicionarColunaSeNaoExistir(db, 'contas', 'dia_base', 'INTEGER');
+    adicionarColunaSeNaoExistir(db, 'parcelas', 'valor_pago', 'INTEGER');
+    versao = 1;
+    definirVersaoSchema(db, 1);
+  }
+
+  // Migração 2: Conversão de valores monetários float para centavos (INTEGER)
+  if (versao < 2) {
+    try {
+      // Verifica se existem valores reais que precisem ser multiplicados por 100
+      db.run(`
+        UPDATE parcelas 
+        SET valor = CAST(ROUND(valor * 100) AS INTEGER),
+            valor_pago = CASE WHEN valor_pago IS NOT NULL THEN CAST(ROUND(valor_pago * 100) AS INTEGER) ELSE NULL END
+        WHERE typeof(valor) = 'real' OR (valor < 500000 AND typeof(valor) = 'integer' AND valor % 1 != 0);
+      `);
+
+      db.run(`
+        UPDATE contas 
+        SET valor_total = CAST(ROUND(valor_total * 100) AS INTEGER)
+        WHERE typeof(valor_total) = 'real';
+      `);
+    } catch (err) {
+      console.warn('Aviso durante migração de centavos:', err);
+    }
+    versao = 2;
+    definirVersaoSchema(db, 2);
+  }
+
+  // Migração 3: Elimina status 'atrasado' gravado (status no banco é estritamente 'pendente' ou 'pago')
+  if (versao < 3) {
+    try {
+      db.run("UPDATE parcelas SET status = 'pendente' WHERE status = 'atrasado';");
+    } catch (err) {
+      console.warn('Aviso durante migração de status atrasado:', err);
+    }
+    versao = 3;
+    definirVersaoSchema(db, 3);
+  }
+
+  // Migração 4: Garantia de colunas de recorrência
+  if (versao < 4) {
+    adicionarColunaSeNaoExistir(db, 'contas', 'frequencia_recorrencia', 'TEXT');
+    adicionarColunaSeNaoExistir(db, 'contas', 'dia_base', 'INTEGER');
+    versao = 4;
+    definirVersaoSchema(db, 4);
+  }
+
+  // Migração 5: Estrutura dedicada do Cofrinho e migração de registros legados
+  if (versao < 5) {
+    try {
+      // Se houver contas de economia/porquinho antigas, migra para a tabela cofrinhos
+      const resEcon = db.exec(`
+        SELECT c.id, c.descricao, c.valor_total, c.data_criacao,
+               COUNT(p.id) as total_p, MIN(p.data_vencimento) as prim_venc
+        FROM contas c
+        LEFT JOIN parcelas p ON p.conta_id = c.id
+        WHERE c.categoria_id IN (SELECT id FROM categorias WHERE LOWER(nome) LIKE '%econ%' OR LOWER(nome) LIKE '%poup%')
+           OR c.observacoes LIKE '%Porquinho%'
+        GROUP BY c.id;
+      `);
+
+      if (resEcon[0]?.values) {
+        for (const row of resEcon[0].values) {
+          const contaId = row[0] as number;
+          const nome = (row[1] as string) || 'Meu Cofrinho';
+          const valorMeta = (row[2] as number) || 0;
+          const dataCriacao = (row[3] as string) || getHojeIso();
+          const totalP = (row[4] as number) || 1;
+          const valorParcela = totalP > 0 ? Math.floor(valorMeta / totalP) : valorMeta;
+          const dataInicio = (row[5] as string) || dataCriacao;
+
+          db.run(
+            `INSERT INTO cofrinhos (nome, valor_meta, total_parcelas, valor_parcela, data_inicio, concluido, data_criacao)
+             VALUES (?, ?, ?, ?, ?, 0, ?);`,
+            [nome, valorMeta, totalP, valorParcela, dataInicio, dataCriacao]
+          );
+
+          const cofIdRes = db.exec('SELECT last_insert_rowid();');
+          const novoCofId = cofIdRes[0]?.values[0]?.[0] as number;
+
+          if (novoCofId) {
+            // Migra parcelas pagas como depósitos reais
+            const resParcPagas = db.exec(
+              `SELECT valor, data_pagamento FROM parcelas WHERE conta_id = ? AND status = 'pago';`,
+              [contaId]
+            );
+            if (resParcPagas[0]?.values) {
+              for (const pRow of resParcPagas[0].values) {
+                const valPago = (pRow[0] as number) || valorParcela;
+                const dtPag = (pRow[1] as string) || dataInicio;
+                db.run(
+                  `INSERT INTO cofrinho_depositos (cofrinho_id, valor, data_deposito, observacao)
+                   VALUES (?, ?, ?, 'Depósito migrado do plano anterior');`,
+                  [novoCofId, valPago, dtPag]
+                );
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Aviso durante migração de cofrinhos legados:', err);
+    }
+    versao = 5;
+    definirVersaoSchema(db, 5);
+  }
+
+  // Migração 6: Criação da tabela de notificações enviadas e índices finais
+  if (versao < 6) {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS notificacoes_enviadas (
+        chave TEXT PRIMARY KEY,
+        parcela_id INTEGER,
+        data_vencimento TEXT,
+        enviada_em TEXT
+      );
+    `);
+    versao = 6;
+    definirVersaoSchema(db, 6);
+  }
+
+  // Reativa PRAGMA foreign_keys = ON
+  db.run('PRAGMA foreign_keys = ON;');
+}
+
 export function recriarCategoriasPadrao(db: Database) {
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Gastos', '#2563eb');");
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Economias', '#10b981');");
   db.run("INSERT OR IGNORE INTO categorias (nome, cor) VALUES ('Reservas', '#f59e0b');");
-
-  // Garante que todas as contas normais (que não sejam porquinho de economia) pertençam à categoria Gastos
-  try {
-    db.run(`
-      UPDATE contas
-      SET categoria_id = (SELECT id FROM categorias WHERE nome = 'Gastos' LIMIT 1)
-      WHERE categoria_id IN (SELECT id FROM categorias WHERE nome = 'Economias')
-        AND (observacoes IS NULL OR observacoes NOT LIKE '%Porquinho%');
-    `);
-  } catch {}
 }
 
 /**
- * Atualiza o status de parcelas vencidas para 'atrasado'
- */
-export function atualizarStatusAtrasados(db: Database) {
-  const hoje = new Date().toISOString().slice(0, 10);
-  
-  db.run(
-    `UPDATE parcelas 
-     SET status = 'atrasado' 
-     WHERE (status = 'pendente' OR status IS NULL) 
-       AND data_pagamento IS NULL 
-       AND data_vencimento < ?;`,
-    [hoje]
-  );
-
-  db.run(
-    `UPDATE parcelas 
-     SET status = 'pendente' 
-     WHERE status = 'atrasado' 
-       AND data_pagamento IS NULL 
-       AND data_vencimento >= ?;`,
-    [hoje]
-  );
-}
-
-/**
- * Obtém a instância do banco SQLite com tratamentos de erro isolados por etapa,
- * migrações com rollback-safe e resolução relativa do WASM para Capacitor
+ * Obtém a instância do banco SQLite com tratamentos de erro isolados por etapa
  */
 export async function getDb(): Promise<Database> {
   if (dbInstance) {
@@ -319,29 +448,26 @@ export async function getDb(): Promise<Database> {
       SQL = await initSqlJs({
         locateFile: (file: string) => {
           if (file.endsWith('.wasm')) {
-            if (typeof sqlWasmUrl === 'string' && sqlWasmUrl) {
-              // Garante caminho relativo seguro tanto no Capacitor (https://localhost) quanto em bundles OTA
-              const relativePath = sqlWasmUrl.replace(/^\/+/, '');
-              try {
-                const base =
-                  typeof document !== 'undefined' && document.baseURI
-                    ? document.baseURI
-                    : typeof window !== 'undefined'
-                    ? window.location.href
-                    : 'https://localhost/';
-                return new URL(relativePath, base).href;
-              } catch {
-                return relativePath;
-              }
-            }
-            return file;
+            // Tenta servir o arquivo estático da pasta public ou URL empacotada
+            return '/sql-wasm.wasm';
           }
           return file;
         },
       });
-    } catch (err: any) {
-      console.error('Falha na etapa: carregar o WASM do sql.js:', err);
-      throw new DatabaseInitError('carregar o WASM do sql.js', err);
+    } catch {
+      // Fallback para URL empacotada do Vite
+      try {
+        SQL = await initSqlJs({
+          locateFile: (file: string) => {
+            if (file.endsWith('.wasm') && typeof sqlWasmUrl === 'string') {
+              return sqlWasmUrl;
+            }
+            return file;
+          },
+        });
+      } catch (err: any) {
+        throw new DatabaseInitError('carregar o WASM do sql.js', err);
+      }
     }
 
     // ETAPA 2: Abrir o arquivo salvo no IndexedDB
@@ -349,7 +475,6 @@ export async function getDb(): Promise<Database> {
     try {
       savedData = await carregarDoIndexedDB();
     } catch (err: any) {
-      console.error('Falha na etapa: abrir o arquivo salvo (leitura IndexedDB):', err);
       throw new DatabaseInitError('abrir o arquivo salvo (leitura)', err);
     }
 
@@ -361,11 +486,10 @@ export async function getDb(): Promise<Database> {
         db = new SQL.Database();
       }
     } catch (err: any) {
-      console.error('Falha na etapa: abrir o arquivo salvo (instanciação do SQLite):', err);
       throw new DatabaseInitError('abrir o arquivo salvo (instanciação SQLite)', err);
     }
 
-    // ETAPA 3: Backup pré-migração (guarda cópia dos bytes originais para segurança)
+    // ETAPA 3: Backup pré-migração
     if (savedData && savedData.length > 0) {
       try {
         await salvarBackupPreMigracao(savedData);
@@ -376,69 +500,33 @@ export async function getDb(): Promise<Database> {
 
     // ETAPA 4: Migrações seguras
     try {
-      // Desativa foreign_keys durante o processo de migração
-      db.run('PRAGMA foreign_keys = OFF;');
-
-      // Verifica versão atual do schema
-      const resVer = db.exec('PRAGMA user_version;');
-      let versaoAtual = (resVer[0]?.values[0]?.[0] as number) || 0;
-
-      // Se o banco existente tiver PRAGMA user_version = 0 mas já tiver as tabelas, trate como versão 1 e migre a partir dela
-      const checkTabelas = db.exec(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contas', 'parcelas', 'categorias');"
-      );
-      const qtdTabelas = checkTabelas[0]?.values?.length || 0;
-
-      if (versaoAtual === 0 && qtdTabelas > 0) {
-        versaoAtual = 1;
-        db.run('PRAGMA user_version = 1;');
-      }
-
-      // Cria tabelas que ainda não existam com CREATE TABLE IF NOT EXISTS
-      criarSchema(db);
-
-      // Adiciona colunas que possam faltar em versões antigas após conferir com PRAGMA table_info
-      adicionarColunaSeNaoExistir(db, 'contas', 'forma_pagamento', "TEXT NOT NULL DEFAULT 'Geral'");
-      adicionarColunaSeNaoExistir(db, 'contas', 'observacoes', 'TEXT');
-      adicionarColunaSeNaoExistir(
-        db,
-        'contas',
-        'data_criacao',
-        `TEXT NOT NULL DEFAULT '${new Date().toISOString().slice(0, 10)}'`
-      );
-      adicionarColunaSeNaoExistir(db, 'parcelas', 'valor_pago', 'REAL');
-
-      // Migração v2: padronização das 3 categorias únicas sem apagar dados vinculados
-      if (versaoAtual < 2) {
-        migrarCategoriasSeguro(db);
-        db.run('PRAGMA user_version = 2;');
-      }
+      executarMigracoes(db);
+      recriarCategoriasPadrao(db);
     } catch (err: any) {
-      console.error('Falha na etapa: migrações de schema:', err);
       throw new DatabaseInitError('migração do schema', err);
     }
 
-    // ETAPA 5: Ativar PRAGMA foreign_keys = ON (estritamente após migrações)
+    // ETAPA 5: Ativar PRAGMA foreign_keys = ON
     try {
       db.run('PRAGMA foreign_keys = ON;');
     } catch (err: any) {
-      console.error('Falha na etapa: PRAGMA foreign_keys:', err);
       throw new DatabaseInitError('PRAGMA foreign_keys', err);
     }
 
-    // ETAPA 6: Seed ou atualização de status
+    // ETAPA 6: Seed se banco completamente vazio
     try {
       const res = db.exec('SELECT COUNT(*) as total FROM contas;');
       const count = (res[0]?.values[0]?.[0] as number) ?? 0;
 
       if (count === 0) {
-        await popularDadosIniciais(db);
-      } else {
-        atualizarStatusAtrasados(db);
+        const resCof = db.exec('SELECT COUNT(*) as total FROM cofrinhos;');
+        const countCof = (resCof[0]?.values[0]?.[0] as number) ?? 0;
+        if (countCof === 0) {
+          await popularDadosIniciais(db);
+        }
       }
     } catch (err: any) {
-      console.error('Falha na etapa: seed de dados ou status:', err);
-      throw new DatabaseInitError('seed de dados', err);
+      console.warn('Aviso ao conferir seed de dados iniciais:', err);
     }
 
     // ETAPA 7: Persistência inicial
@@ -452,7 +540,6 @@ export async function getDb(): Promise<Database> {
     dbInstance = db;
     return db;
   })().catch((err) => {
-    // Reseta a promise para permitir que uma nova tentativa realmente reexecute o fluxo
     initPromise = null;
     throw err;
   });
@@ -460,19 +547,16 @@ export async function getDb(): Promise<Database> {
   return initPromise;
 }
 
-/**
- * Reseta as instâncias em memória para permitir nova tentativa limpa
- */
 export function resetDbPromise() {
   initPromise = null;
 }
 
+// Debounce de persistência de 500ms
 let persistTimer: any = null;
 let pendingPersistResolve: (() => void)[] = [];
 
 /**
- * Persiste o banco atual no IndexedDB com debounce de 150ms
- * Agrupa alterações rápidas sucessivas, economizando CPU, bateria e I/O de disco
+ * Persiste o banco atual no IndexedDB com debounce de 500 ms
  */
 export async function persistirDb(): Promise<void> {
   if (!dbInstance) return;
@@ -495,12 +579,12 @@ export async function persistirDb(): Promise<void> {
       } finally {
         callbacks.forEach((cb) => cb());
       }
-    }, 150);
+    }, 500);
   });
 }
 
 /**
- * Força a gravação imediata sem esperar o timer (usado antes de exportar arquivo)
+ * Força a gravação imediata sem esperar o timer (usado em visibilitychange e pagehide)
  */
 export async function persistirDbImediato(): Promise<void> {
   if (persistTimer) {
@@ -521,17 +605,119 @@ export async function persistirDbImediato(): Promise<void> {
   }
 }
 
+// Listeners globais para gravação imediata ao fechar o app ou trocar de aba
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      persistirDbImediato();
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    persistirDbImediato();
+  });
+  window.addEventListener('beforeunload', () => {
+    persistirDbImediato();
+  });
+}
+
 /**
- * Exporta o arquivo binário .sqlite para download no navegador
+ * Executa uma operação em transação atômica (BEGIN TRANSACTION ... COMMIT / ROLLBACK)
+ */
+export async function executarEmTransacao<T>(
+  callback: (db: Database) => Promise<T> | T
+): Promise<T> {
+  const db = await getDb();
+  db.run('BEGIN TRANSACTION;');
+  try {
+    const result = await callback(db);
+    db.run('COMMIT;');
+    persistirDb();
+    return result;
+  } catch (error) {
+    try {
+      db.run('ROLLBACK;');
+    } catch (rbError) {
+      console.warn('Aviso ao efetuar ROLLBACK:', rbError);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Solicita persistência durável no navegador via navigator.storage.persist()
+ */
+export async function solicitarPersistenciaStorage(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    try {
+      return await navigator.storage.persist();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function verificarPersistenciaStorage(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persisted) {
+    try {
+      return await navigator.storage.persisted();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Exporta o arquivo binário .sqlite real nomeado com a data local: em-dia-YYYY-MM-DD.sqlite
  */
 export async function exportarArquivoSqlite(): Promise<void> {
   await persistirDbImediato();
   const db = await getDb();
   const binaryArray = db.export();
   const blob = new Blob([binaryArray.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
-  
-  const hoje = new Date().toISOString().slice(0, 10);
-  const fileName = `contas_a_pagar_${hoje}.sqlite`;
+
+  const hoje = getHojeIso();
+  const fileName = `em-dia-${hoje}.sqlite`;
+
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+
+  // Registra a data do último backup para lembretes de 30 dias
+  try {
+    localStorage.setItem('em_dia_ultimo_backup_sqlite', hoje);
+  } catch {}
+}
+
+/**
+ * Exporta os bytes SQLite armazenados para recuperação de emergência (mesmo com erro)
+ */
+export async function exportarBytesRecuperacao(): Promise<void> {
+  let bytes: Uint8Array | null = null;
+  if (dbInstance) {
+    try {
+      bytes = dbInstance.export();
+    } catch {}
+  }
+  if (!bytes) {
+    bytes = await carregarDoIndexedDB();
+  }
+  if (!bytes) {
+    bytes = await carregarBackupPreMigracao();
+  }
+
+  if (!bytes || bytes.length === 0) {
+    throw new Error('Nenhum dado encontrado para exportação de emergência.');
+  }
+
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+  const hoje = getHojeIso();
+  const fileName = `em-dia-recuperacao-${hoje}.sqlite`;
 
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
@@ -543,36 +729,17 @@ export async function exportarArquivoSqlite(): Promise<void> {
 }
 
 /**
- * Exporta os bytes salvos para recuperação emergencial (mesmo quando getDb() falha)
- */
-export async function exportarBytesRecuperacao(): Promise<void> {
-  let bytes = dbInstance ? dbInstance.export() : null;
-  if (!bytes || bytes.length === 0) {
-    bytes = await carregarDoIndexedDB();
-  }
-  if (!bytes || bytes.length === 0) {
-    bytes = await carregarBackupPreMigracao();
-  }
-
-  if (!bytes || bytes.length === 0) {
-    throw new Error('Nenhum dado salvo foi encontrado neste aparelho para exportação.');
-  }
-
-  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
-  const dataStr = new Date().toISOString().slice(0, 10);
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `em_dia_recuperacao_${dataStr}.sqlite`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
-}
-
-/**
- * Recria o banco de dados do zero (remove o banco atual e inicia um novo)
+ * Limpa o IndexedDB e recria o banco de dados do zero com schema limpo e categorias padrão
  */
 export async function recriarBancoDoZero(): Promise<Database> {
+  if (dbInstance) {
+    try {
+      dbInstance.close();
+    } catch {}
+    dbInstance = null;
+  }
+  resetDbPromise();
+
   try {
     const idb = await openIndexedDB();
     await new Promise<void>((resolve, reject) => {
@@ -583,37 +750,61 @@ export async function recriarBancoDoZero(): Promise<Database> {
       req.onerror = () => reject(req.error);
     });
   } catch (err) {
-    console.warn('Aviso ao apagar chave no IndexedDB:', err);
+    console.warn('Aviso ao limpar IndexedDB:', err);
   }
-
-  if (dbInstance) {
-    try {
-      dbInstance.close();
-    } catch {}
-    dbInstance = null;
-  }
-  initPromise = null;
 
   return await getDb();
 }
 
 /**
- * Restaura o banco de dados a partir de um arquivo .sqlite fornecido pelo usuário
+ * Valida o cabeçalho "SQLite format 3"
+ */
+export function validarCabecalhoSqlite(buffer: ArrayBuffer): boolean {
+  if (buffer.byteLength < 16) return false;
+  const headerBytes = new Uint8Array(buffer, 0, 16);
+  const expected = 'SQLite format 3\0';
+  for (let i = 0; i < expected.length; i++) {
+    if (headerBytes[i] !== expected.charCodeAt(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Restaura o banco de dados a partir de um arquivo .sqlite fornecido pelo usuário,
+ * validando o cabeçalho e executando migrações caso o arquivo seja de uma versão anterior
  */
 export async function restaurarArquivoSqlite(fileBuffer: ArrayBuffer): Promise<void> {
+  if (!validarCabecalhoSqlite(fileBuffer)) {
+    throw new Error('Arquivo inválido: o arquivo selecionado não é um banco de dados SQLite válido (cabeçalho SQLite format 3 ausente).');
+  }
+
   const SQL = await initSqlJs({
-    locateFile: (file) => (file.endsWith('.wasm') ? sqlWasmUrl.replace(/^\/+/, '') : file),
+    locateFile: (file) => (file.endsWith('.wasm') ? '/sql-wasm.wasm' : file),
   });
 
   const uint8 = new Uint8Array(fileBuffer);
-  const novoDb = new SQL.Database(uint8);
+  let novoDb: Database;
+  try {
+    novoDb = new SQL.Database(uint8);
+  } catch (err: any) {
+    throw new Error('Falha ao abrir arquivo SQLite: ' + (err?.message || 'Arquivo corrompido'));
+  }
 
   const tables = novoDb.exec(
     "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('contas', 'parcelas', 'categorias')"
   );
-  
+
   if (!tables[0] || tables[0].values.length < 3) {
     throw new Error('Arquivo SQLite inválido: tabelas essenciais (contas, parcelas, categorias) não foram encontradas.');
+  }
+
+  // Executa migrações caso o arquivo importado seja de uma versão antiga
+  try {
+    executarMigracoes(novoDb);
+  } catch (err: any) {
+    console.warn('Aviso ao rodar migrações no banco importado:', err);
   }
 
   if (dbInstance) {
@@ -622,14 +813,8 @@ export async function restaurarArquivoSqlite(fileBuffer: ArrayBuffer): Promise<v
     } catch {}
   }
 
-  novoDb.run('PRAGMA foreign_keys = OFF;');
-  criarSchema(novoDb);
-  migrarCategoriasSeguro(novoDb);
-  novoDb.run('PRAGMA foreign_keys = ON;');
-
   dbInstance = novoDb;
-  atualizarStatusAtrasados(dbInstance);
-  await persistirDb();
+  await persistirDbImediato();
 }
 
 /**
@@ -640,23 +825,29 @@ export async function limparBancoDeDados(): Promise<void> {
   db.run('PRAGMA foreign_keys = OFF;');
   db.run('DELETE FROM parcelas;');
   db.run('DELETE FROM contas;');
+  db.run('DELETE FROM cofrinho_depositos;');
+  db.run('DELETE FROM cofrinhos;');
   db.run('DELETE FROM categorias;');
+  db.run('DELETE FROM notificacoes_enviadas;');
   db.run('DELETE FROM sqlite_sequence;');
 
   recriarCategoriasPadrao(db);
   db.run('PRAGMA foreign_keys = ON;');
 
-  await persistirDb();
+  await persistirDbImediato();
 }
 
 /**
- * Popula dados de exemplo realistas com 3 categorias fundamentais
+ * Popula dados de exemplo realistas em CENTAVOS (INTEGER)
  */
 export async function popularDadosIniciais(db?: Database): Promise<void> {
   const targetDb = db || (await getDb());
 
+  targetDb.run('PRAGMA foreign_keys = OFF;');
   targetDb.run('DELETE FROM parcelas;');
   targetDb.run('DELETE FROM contas;');
+  targetDb.run('DELETE FROM cofrinho_depositos;');
+  targetDb.run('DELETE FROM cofrinhos;');
   targetDb.run('DELETE FROM categorias;');
   targetDb.run('DELETE FROM sqlite_sequence;');
 
@@ -671,6 +862,9 @@ export async function popularDadosIniciais(db?: Database): Promise<void> {
   }
 
   const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+
   const formatDateStr = (year: number, month: number, day: number): string => {
     const d = new Date(year, month, day);
     const yyyy = d.getFullYear();
@@ -679,34 +873,31 @@ export async function popularDadosIniciais(db?: Database): Promise<void> {
     return `${yyyy}-${mm}-${dd}`;
   };
 
-  const y = now.getFullYear();
-  const m = now.getMonth();
-
-  // Seed de exemplos iniciais
+  // 1. Despesa única: Supermercado R$ 650,00 (65000 centavos)
   targetDb.run(
     `INSERT INTO contas (id, descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
-     VALUES (1, 'Supermercado Mensal', 1, 650.00, 'unica', 'Geral', 'Compras para despensa', ?);`,
+     VALUES (1, 'Supermercado Mensal', 1, 65000, 'unica', 'Geral', 'Compras para despensa', ?);`,
     [formatDateStr(y, m, 1)]
   );
   targetDb.run(
     `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-     VALUES (1, 1, 1, 650.00, ?, ?, 'pago', 650.00);`,
+     VALUES (1, 1, 1, 65000, ?, ?, 'pago', 65000);`,
     [formatDateStr(y, m, 5), formatDateStr(y, m, 5)]
   );
 
+  // 2. Cofrinho dedicado: Viagem de Férias (R$ 2.400,00 em 12x de R$ 200,00)
   targetDb.run(
-    `INSERT INTO contas (id, descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
-     VALUES (2, 'Poupança 2026', 2, 1200.00, 'parcelada', 'Geral', 'Meta de economia mensal', ?);`,
-    [formatDateStr(y, m, 1)]
+    `INSERT INTO cofrinhos (id, nome, valor_meta, total_parcelas, valor_parcela, data_inicio, concluido, data_criacao)
+     VALUES (1, 'Férias de Verão', 240000, 12, 20000, ?, 0, ?);`,
+    [formatDateStr(y, m, 1), formatDateStr(y, m, 1)]
   );
-  for (let i = 0; i < 12; i++) {
-    const status = i === 0 ? 'pago' : 'pendente';
-    const dataPag = i === 0 ? formatDateStr(y, m, 10) : null;
-    const valorPago = i === 0 ? 100.00 : null;
-    targetDb.run(
-      `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-       VALUES (2, ?, 12, 100.00, ?, ?, ?, ?);`,
-      [i + 1, formatDateStr(y, m + i, 10), dataPag, status, valorPago]
-    );
-  }
+  // Primeiro depósito realizado de R$ 200,00
+  targetDb.run(
+    `INSERT INTO cofrinho_depositos (cofrinho_id, valor, data_deposito, observacao)
+     VALUES (1, 20000, ?, 'Primeiro depósito mensal');`,
+    [formatDateStr(y, m, 2)]
+  );
+
+  targetDb.run('PRAGMA foreign_keys = ON;');
 }
+

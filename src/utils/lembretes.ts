@@ -141,9 +141,12 @@ export async function testarNotificacaoLocal(): Promise<boolean> {
 }
 
 /**
- * Verifica parcelas pendentes com lembrete ativo e emite notificação para vencimentos de hoje
+ * Verifica parcelas pendentes com lembrete ativo e emite notificação para vencimentos de hoje ou em atraso
  */
-export async function verificarAlertasVencimentoHoje(parcelas: Parcela[]): Promise<Parcela[]> {
+export async function verificarAlertasVencimentoHoje(
+  parcelas: Parcela[],
+  onNotificarBanco?: (parcelaId: number, dataVencimento: string) => Promise<void>
+): Promise<Parcela[]> {
   if (typeof window === 'undefined' || !('Notification' in window)) return [];
   if (Notification.permission !== 'granted') return [];
 
@@ -151,32 +154,45 @@ export async function verificarAlertasVencimentoHoje(parcelas: Parcela[]): Promi
   const contasComLembrete = new Set(obterContasComLembrete());
   if (contasComLembrete.size === 0) return [];
 
-  // Carrega histórico para não reenviar o mesmo alerta múltiplas vezes no mesmo dia
+  // Carrega histórico para não reenviar o mesmo alerta múltiplas vezes
   let alertasEnviados: Record<string, string> = {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY_HISTORICO_ALERTAS);
     if (raw) alertasEnviados = JSON.parse(raw);
   } catch {}
 
-  const parcelasHoje = parcelas.filter(
+  const parcelasAlvo = parcelas.filter(
     (p) =>
       p.status !== 'pago' &&
-      p.data_vencimento === hoje &&
+      p.data_vencimento <= hoje &&
       contasComLembrete.has(p.conta_id)
   );
 
   const disparadas: Parcela[] = [];
 
-  for (const p of parcelasHoje) {
-    const chaveAlerta = `${hoje}-${p.id}`;
+  for (const p of parcelasAlvo) {
+    const chaveAlerta = `${p.id}_${p.data_vencimento}`;
     if (!alertasEnviados[chaveAlerta]) {
-      const sucesso = await dispararNotificacaoLocal(
-        `🔔 Vence Hoje: ${p.conta_descricao}`,
-        `A conta no valor de ${formatarMoeda(p.valor)} vence hoje. Toque para conferir!`
-      );
+      const isHoje = p.data_vencimento === hoje;
+      const dataBr = p.data_vencimento.split('-').reverse().join('/');
+      const titulo = isHoje
+        ? `🔔 Vence Hoje: ${p.conta_descricao}`
+        : `⚠️ Conta Atrasada: ${p.conta_descricao}`;
+      const corpo = isHoje
+        ? `A conta no valor de ${formatarMoeda(p.valor)} vence hoje. Toque para conferir!`
+        : `A conta no valor de ${formatarMoeda(p.valor)} venceu em ${dataBr}. Não se esqueça de pagar!`;
+
+      const sucesso = await dispararNotificacaoLocal(titulo, corpo);
       if (sucesso) {
         alertasEnviados[chaveAlerta] = new Date().toISOString();
         disparadas.push(p);
+        if (onNotificarBanco) {
+          try {
+            await onNotificarBanco(p.id, p.data_vencimento);
+          } catch (err) {
+            console.warn('Aviso ao registrar notificação no banco:', err);
+          }
+        }
       }
     }
   }

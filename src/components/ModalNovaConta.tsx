@@ -21,7 +21,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [descricao, setDescricao] = useState('');
   const [valorTotalStr, setValorTotalStr] = useState('');
   const [tipo, setTipo] = useState<TipoConta>('unica');
-  const [numeroParcelas, setNumeroParcelas] = useState<number>(2);
+  const [numeroParcelas, setNumeroParcelas] = useState<number | string>(2);
   const [frequencia, setFrequencia] = useState<'mensal' | 'anual' | 'semanal' | 'quinzenal'>('mensal');
   const [dataVencimento, setDataVencimento] = useState(getHojeString());
   const [lembreteAtivo, setLembreteAtivo] = useState(false);
@@ -38,6 +38,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
     categorias[0];
   const categoriaFinalId = catGastos?.id || 1;
   const valorTotalNum = parseFloat(valorTotalStr.replace(/\./g, '').replace(',', '.')) || 0;
+  const parcelasNum = Math.max(1, Math.min(120, parseInt(String(numeroParcelas), 10) || 1));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,8 +54,8 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
       setErro('Informe a data de vencimento.');
       return;
     }
-    if (tipo === 'parcelada' && numeroParcelas < 2) {
-      setErro('Para contas parceladas, informe no mínimo 2 parcelas.');
+    if (tipo === 'parcelada' && parcelasNum < 1) {
+      setErro('Informe pelo menos 1 parcela.');
       return;
     }
 
@@ -69,7 +70,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
         forma_pagamento: 'Geral',
         observacoes: observacoes.trim() || undefined,
         data_primeiro_vencimento: dataVencimento,
-        numero_parcelas: tipo === 'parcelada' ? numeroParcelas : (tipo === 'recorrente' ? (frequencia === 'anual' ? 5 : 12) : 1),
+        numero_parcelas: tipo === 'parcelada' ? parcelasNum : (tipo === 'recorrente' ? (frequencia === 'anual' ? 5 : 12) : 1),
         frequencia_recorrencia: tipo === 'recorrente' ? frequencia : undefined,
       });
 
@@ -148,6 +149,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
                 </span>
                 <input
                   type="text"
+                  inputMode="decimal"
                   required
                   placeholder="0,00"
                   value={valorTotalStr}
@@ -214,24 +216,40 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
                   Número de Parcelas *
                 </label>
                 <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400 font-mono">
-                  {numeroParcelas}x de {formatarMoeda(valorTotalNum > 0 ? valorTotalNum / Math.max(1, numeroParcelas) : 0)}
+                  {parcelasNum}x de {formatarMoeda(valorTotalNum > 0 ? valorTotalNum / parcelasNum : 0)}
                 </span>
               </div>
               <input
                 type="number"
-                min="2"
+                min="1"
                 max="120"
                 required
                 value={numeroParcelas}
                 onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  setNumeroParcelas(isNaN(val) ? 2 : Math.max(2, Math.min(120, val)));
+                  const val = e.target.value;
+                  if (val === '') {
+                    setNumeroParcelas('');
+                    return;
+                  }
+                  const num = parseInt(val, 10);
+                  if (!isNaN(num)) {
+                    setNumeroParcelas(Math.min(120, Math.max(1, num)));
+                  }
+                }}
+                onBlur={() => {
+                  if (numeroParcelas === '' || Number(numeroParcelas) < 1) {
+                    setNumeroParcelas(1);
+                  }
                 }}
                 className="w-full bg-white dark:bg-slate-800 border border-blue-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                placeholder="12"
+                placeholder="1"
               />
               <p className="text-[11px] text-blue-800/80 dark:text-blue-300">
-                Serão geradas <strong>{numeroParcelas} parcelas mensais</strong> de ~{formatarMoeda(valorTotalNum > 0 ? valorTotalNum / Math.max(1, numeroParcelas) : 0)} a partir de {formatarData(dataVencimento)}.
+                {parcelasNum === 1 ? (
+                  <>Será gerada <strong>1 parcela</strong> de {formatarMoeda(valorTotalNum)} em {formatarData(dataVencimento)}.</>
+                ) : (
+                  <>Serão geradas <strong>{parcelasNum} parcelas mensais</strong> de ~{formatarMoeda(valorTotalNum > 0 ? valorTotalNum / parcelasNum : 0)} a partir de {formatarData(dataVencimento)}.</>
+                )}
               </p>
             </div>
           )}

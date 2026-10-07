@@ -49,15 +49,22 @@ import {
   restaurarExclusao,
   EditarParcelaInput,
   DadosRestauracaoExclusao,
+  registrarNotificacaoEnviadaNoBanco,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
 import { verificarAlertasVencimentoHoje } from './utils/lembretes';
 
 export default function App() {
-  // Modo Escuro
+  // Modo Escuro (segue o sistema por padrão, com opção manual)
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('contas_dark_mode');
-    return saved !== null ? saved === 'true' : false;
+    if (saved !== null) {
+      return saved === 'true';
+    }
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
   });
 
   useEffect(() => {
@@ -124,8 +131,10 @@ export default function App() {
       if (parts) {
         setParcelamentos(parts);
       }
-      // Verifica e emite notificações locais para contas com lembrete que vencem hoje
-      verificarAlertasVencimentoHoje(parcs);
+      // Verifica e emite notificações locais para contas com lembrete que vencem hoje ou estão atrasadas
+      listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
+        verificarAlertasVencimentoHoje(todasPendentes, registrarNotificacaoEnviadaNoBanco);
+      });
     } catch (error) {
       console.error('Erro ao consultar banco SQLite:', error);
     } finally {
@@ -136,6 +145,21 @@ export default function App() {
   useEffect(() => {
     carregarDados();
   }, [carregarDados]);
+
+  // Listener para verificar lembretes quando o usuário volta para o app (visibilitychange)
+  useEffect(() => {
+    const handleVisibilidade = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
+          verificarAlertasVencimentoHoje(todasPendentes, registrarNotificacaoEnviadaNoBanco);
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilidade);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilidade);
+    };
+  }, []);
 
   useEffect(() => {
     if (abaAtiva === 'parcelas') {

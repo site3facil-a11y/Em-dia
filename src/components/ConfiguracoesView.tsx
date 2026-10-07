@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Download,
   Upload,
@@ -8,11 +8,29 @@ import {
   Info,
   CheckCircle,
   PiggyBank,
+  Bell,
+  ShieldCheck,
+  AlertTriangle,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
-import { exportarArquivoSqlite, restaurarArquivoSqlite } from '../db/sqlite';
+import {
+  exportarArquivoSqlite,
+  restaurarArquivoSqlite,
+  validarCabecalhoSqlite,
+  solicitarPersistenciaStorage,
+  verificarPersistenciaStorage,
+} from '../db/sqlite';
 import { gerarCsvParcelas } from '../db/repository';
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
 import { compararVersoes } from '../utils/versao';
+import {
+  obterContasComLembrete,
+  testarNotificacaoLocal,
+  verificarPermissaoNotificacao,
+  solicitarPermissaoNotificacao,
+} from '../utils/lembretes';
 
 interface ConfiguracoesViewProps {
   darkMode?: boolean;
@@ -35,10 +53,96 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
   const [modalAtualizacaoAberto, setModalAtualizacaoAberto] = useState(false);
   const [releaseEncontrada, setReleaseEncontrada] = useState<ReleaseInfo | null>(null);
+  const [testandoNotificacao, setTestandoNotificacao] = useState(false);
+  const [permNotificacao, setPermNotificacao] = useState<NotificationPermission | 'unsupported'>(() =>
+    verificarPermissaoNotificacao()
+  );
+  const [qtdLembretes, setQtdLembretes] = useState(() => obterContasComLembrete().length);
+  const [persistenciaAtiva, setPersistenciaAtiva] = useState<boolean | null>(null);
+  const [ajudaNotificacaoAberta, setAjudaNotificacaoAberta] = useState(false);
+  const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
+  const [bufferRestauracao, setBufferRestauracao] = useState<ArrayBuffer | null>(null);
+  const [nomeArquivoRestauracao, setNomeArquivoRestauracao] = useState<string>('');
+
+  const [diasDesdeUltimoBackup, setDiasDesdeUltimoBackup] = useState<number | null>(() => {
+    try {
+      const ult = localStorage.getItem('em_dia_ultimo_backup_sqlite');
+      if (!ult) return 999;
+      const dataUlt = new Date(ult);
+      const diffMs = Date.now() - dataUlt.getTime();
+      return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    verificarPersistenciaStorage().then(setPersistenciaAtiva);
+  }, []);
+
+  const handleSolicitarPersistencia = async () => {
+    try {
+      setProcessando(true);
+      const concedida = await solicitarPersistenciaStorage();
+      setPersistenciaAtiva(concedida);
+      if (concedida) {
+        notificarSucesso('Persistência durável ativada com sucesso pelo navegador!');
+      } else {
+        setErro('O navegador não concedeu persistência durável no momento.');
+      }
+    } catch (err: any) {
+      setErro('Erro ao solicitar persistência: ' + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  useEffect(() => {
+    const sync = () => {
+      setQtdLembretes(obterContasComLembrete().length);
+      setPermNotificacao(verificarPermissaoNotificacao());
+    };
+    window.addEventListener('em-dia-lembretes-alterados', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('em-dia-lembretes-alterados', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
 
   const notificarSucesso = (msg: string) => {
     setMensagemSucesso(msg);
     setTimeout(() => setMensagemSucesso(null), 4000);
+  };
+
+  const handleTestarNotificacao = async () => {
+    try {
+      setTestandoNotificacao(true);
+      const perm = verificarPermissaoNotificacao();
+      if (perm === 'unsupported') {
+        setErro('Notificações locais não são suportadas neste navegador.');
+        return;
+      }
+      if (perm !== 'granted') {
+        const permitiu = await solicitarPermissaoNotificacao();
+        setPermNotificacao(verificarPermissaoNotificacao());
+        if (!permitiu) {
+          setErro('Permissão de notificação não foi concedida.');
+          return;
+        }
+      }
+      const disparou = await testarNotificacaoLocal();
+      setPermNotificacao(verificarPermissaoNotificacao());
+      if (disparou) {
+        notificarSucesso('Notificação de teste enviada com sucesso no seu dispositivo!');
+      } else {
+        setErro('Não foi possível emitir a notificação. Verifique se o navegador está bloqueando alertas.');
+      }
+    } catch (err: any) {
+      setErro('Erro ao testar notificação: ' + err.message);
+    } finally {
+      setTestandoNotificacao(false);
+    }
   };
 
   // Verificar Atualização no GitHub
@@ -105,27 +209,46 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     }
   };
 
-  // Restaurar Arquivo .sqlite
-  const handleRestaurarSqlite = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Restaurar Arquivo .sqlite com validação e confirmação segura
+  const handleSelecionarArquivoSqlite = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (!confirm('ATENÇÃO: Restaurar um arquivo .sqlite irá substituir todos os dados atuais. Deseja continuar?')) {
-      e.target.value = '';
-      return;
-    }
 
     try {
       setProcessando(true);
       const buffer = await file.arrayBuffer();
-      await restaurarArquivoSqlite(buffer);
+      if (!validarCabecalhoSqlite(buffer)) {
+        setErro('Arquivo inválido: o arquivo selecionado não é um banco de dados SQLite válido (cabeçalho SQLite format 3 ausente).');
+        e.target.value = '';
+        return;
+      }
+      setBufferRestauracao(buffer);
+      setNomeArquivoRestauracao(file.name);
+      setModalRestaurarAberto(true);
+    } catch (err: any) {
+      setErro('Erro ao ler arquivo: ' + err.message);
+    } finally {
+      setProcessando(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleExecutarRestauracao = async (fazerBackupAntes: boolean) => {
+    if (!bufferRestauracao) return;
+    try {
+      setProcessando(true);
+      setModalRestaurarAberto(false);
+      if (fazerBackupAntes) {
+        await exportarArquivoSqlite();
+      }
+      await restaurarArquivoSqlite(bufferRestauracao);
       await onDadosModificados();
+      setBufferRestauracao(null);
       notificarSucesso('Banco de dados SQLite restaurado com sucesso a partir do arquivo!');
     } catch (err: any) {
       setErro('Erro ao restaurar banco: ' + (err.message || 'Arquivo inválido.'));
     } finally {
       setProcessando(false);
-      e.target.value = '';
     }
   };
 
@@ -154,6 +277,29 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Aviso de Lembrete de Backup (+30 dias) */}
+      {diasDesdeUltimoBackup !== null && diasDesdeUltimoBackup >= 30 && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs sm:text-sm font-medium flex items-start gap-3 shadow-xs animate-in fade-in">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
+          <div className="flex-1">
+            <h5 className="font-bold text-amber-950 dark:text-amber-100">
+              Lembrete de Backup Seguro
+            </h5>
+            <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
+              Faz mais de 30 dias desde o seu último backup exportado. Baixe uma cópia do seu arquivo SQLite para manter seus lançamentos protegidos caso limpe o navegador.
+            </p>
+            <button
+              onClick={handleBackupSqlite}
+              disabled={processando}
+              className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Baixar Cópia Agora (.sqlite)</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Notificações de Sucesso ou Erro */}
       {mensagemSucesso && (
         <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs sm:text-sm font-semibold flex items-center gap-2.5 animate-in fade-in">
@@ -235,6 +381,125 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         </div>
       </div>
 
+      {/* Lembretes e Notificações no Dispositivo */}
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
+              <Bell className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Lembretes de Vencimento
+                </h4>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                  {qtdLembretes} {qtdLembretes === 1 ? 'conta escolhida' : 'contas escolhidas'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Apenas as contas que você marcar com o sininho (🔔) recebem aviso no dia do vencimento.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleTestarNotificacao}
+            disabled={testandoNotificacao}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+            title="Enviar uma notificação de teste para verificar se o aparelho recebe alertas"
+          >
+            <Bell className={`w-3.5 h-3.5 ${testandoNotificacao ? 'animate-bounce' : ''}`} />
+            <span>{testandoNotificacao ? 'Testando...' : 'Testar no aparelho'}</span>
+          </button>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+          <span className="text-slate-600 dark:text-slate-400">Status das Notificações do Navegador:</span>
+          <div className="flex items-center gap-2">
+            <span
+              className={`font-bold px-2 py-0.5 rounded-full text-[11px] ${
+                permNotificacao === 'granted'
+                  ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300'
+                  : permNotificacao === 'denied'
+                  ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
+                  : 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300'
+              }`}
+            >
+              {permNotificacao === 'granted'
+                ? '✓ Permitido'
+                : permNotificacao === 'denied'
+                ? '✕ Bloqueado'
+                : 'Não solicitado'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setAjudaNotificacaoAberta(!ajudaNotificacaoAberta)}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              title="Informações sobre lembretes no navegador e aparelho"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Painel Explicativo Transparente sobre Notificações */}
+        {ajudaNotificacaoAberta && (
+          <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-slate-700 dark:text-slate-300 space-y-2 animate-in fade-in">
+            <h5 className="font-bold text-blue-950 dark:text-blue-100 flex items-center gap-1.5">
+              <Info className="w-4 h-4 text-blue-600" />
+              <span>Como funcionam os lembretes no seu aparelho</span>
+            </h5>
+            <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
+              <li><strong>Zero Spam:</strong> O app só notifica as contas individuais onde você tocou no ícone do sininho (🔔).</li>
+              <li><strong>No iPhone (iOS):</strong> Para receber lembretes com a tela bloqueada ou fora do Safari, toque em <em>Compartilhar</em> e selecione <em>"Adicionar à Tela de Início"</em> (PWA).</li>
+              <li><strong>No Android & Computador:</strong> Notificações usam o Service Worker nativo. Se estiver bloqueado, clique no ícone de cadeado na barra de endereços do navegador e permita as Notificações.</li>
+              <li><strong>Ao Abrir o App:</strong> O Em Dia sempre confere automaticamente vencimentos de hoje ou atrasados assim que você acessa o sistema.</li>
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* Persistência de Armazenamento Local (Storage Persistence) */}
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-teal-50 dark:bg-teal-950/80 text-teal-600 dark:text-teal-400 flex items-center justify-center border border-teal-200 dark:border-teal-800">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                Proteção Durável do Navegador
+              </h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Garante que o navegador não apague o banco IndexedDB durante limpezas automáticas de memória.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`font-bold px-2 py-0.5 rounded-full text-[11px] ${
+                persistenciaAtiva
+                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              {persistenciaAtiva ? '✓ Protegido' : 'Padrão'}
+            </span>
+            {!persistenciaAtiva && (
+              <button
+                onClick={handleSolicitarPersistencia}
+                disabled={processando}
+                className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-colors cursor-pointer"
+              >
+                Ativar Proteção
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Backup & Restauração do Arquivo .sqlite */}
       <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
         <div>
@@ -252,7 +517,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
           <button
             onClick={handleBackupSqlite}
             disabled={processando}
-            className="flex items-center justify-center gap-2 p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 font-semibold text-xs transition-colors"
+            className="flex items-center justify-center gap-2 p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 font-semibold text-xs transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>Baixar Arquivo SQLite (.sqlite)</span>
@@ -264,13 +529,13 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
               type="file"
               ref={fileInputRef}
               accept=".sqlite,.db"
-              onChange={handleRestaurarSqlite}
+              onChange={handleSelecionarArquivoSqlite}
               className="hidden"
             />
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={processando}
-              className="w-full flex items-center justify-center gap-2 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-750 font-semibold text-xs transition-colors"
+              className="w-full flex items-center justify-center gap-2 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-750 font-semibold text-xs transition-colors cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               <span>Restaurar Arquivo .sqlite</span>
@@ -285,19 +550,76 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
               Exportar para Planilha (CSV)
             </h5>
             <p className="text-[11px] text-slate-500">
-              Gera um arquivo compatível com Excel e Google Sheets com todas as parcelas, valores e status.
+              Gera um arquivo compatível com Excel (BOM UTF-8 e separador ;) com todas as parcelas e valores.
             </p>
           </div>
           <button
             onClick={handleExportarCsv}
             disabled={processando}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs transition-colors flex-shrink-0"
+            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs transition-colors flex-shrink-0 cursor-pointer"
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>Exportar CSV</span>
           </button>
         </div>
       </div>
+
+      {/* Modal de Confirmação Segura de Restauração SQLite */}
+      {modalRestaurarAberto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Substituir Banco de Dados?
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
+                  A restauração do arquivo <strong>{nomeArquivoRestauracao}</strong> irá <strong>substituir todos os lançamentos atuais</strong> do app pelos registros deste backup.
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                  Deseja salvar uma cópia de segurança do estado atual antes de substituir?
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleExecutarRestauracao(true)}
+                disabled={processando}
+                className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Baixar Backup Atual e Restaurar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExecutarRestauracao(false)}
+                disabled={processando}
+                className="w-full py-2.5 px-4 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Substituir Sem Baixar Cópia
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setModalRestaurarAberto(false);
+                  setBufferRestauracao(null);
+                }}
+                disabled={processando}
+                className="w-full py-2 px-4 rounded-xl text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Atualização do GitHub */}
       <ModalAtualizacao

@@ -8,7 +8,7 @@ interface ModalCriarPorquinhoProps {
   aberto: boolean;
   onFechar: () => void;
   categorias: Categoria[];
-  onSalvar: (conta: NovaContaInput) => Promise<void>;
+  onSalvar: (conta: NovaContaInput) => Promise<number | void>;
 }
 
 export const ModalCriarPorquinho: React.FC<ModalCriarPorquinhoProps> = ({

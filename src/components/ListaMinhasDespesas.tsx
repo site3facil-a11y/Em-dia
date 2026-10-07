@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -322,7 +322,7 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
-                onToggleLembrete(p.conta_id, p.conta_descricao);
+                onToggleLembrete(p.conta_id, p.conta_descricao || 'Despesa');
               }}
               className={`p-1.5 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
                 temLembrete
@@ -459,6 +459,26 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
     };
   }, [cardAbertoId]);
 
+  // Referência para toque no seletor de mês (swipe de mês)
+  const touchXRef = useRef<number | null>(null);
+
+  const handleTouchStartMes = (e: React.TouchEvent) => {
+    touchXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEndMes = (e: React.TouchEvent) => {
+    if (touchXRef.current === null) return;
+    const diff = e.changedTouches[0].clientX - touchXRef.current;
+    touchXRef.current = null;
+    if (Math.abs(diff) > 40) {
+      if (diff > 0) {
+        navegarMes(-1); // Swipe para a direita -> mês anterior
+      } else {
+        navegarMes(1); // Swipe para a esquerda -> próximo mês
+      }
+    }
+  };
+
   // Navegação de mês
   const navegarMes = (direcao: number) => {
     const [ano, mes] = mesSelecionado.split('-').map(Number);
@@ -553,11 +573,15 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
         </div>
       )}
 
-      {/* SELETOR RÁPIDO DE MÊS */}
-      <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+      {/* SELETOR RÁPIDO DE MÊS (COM BOTÕES E SUPORTE A SWIPE LATERAL) */}
+      <div
+        onTouchStart={handleTouchStartMes}
+        onTouchEnd={handleTouchEndMes}
+        className="flex items-center justify-between bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs select-none touch-pan-y"
+      >
         <button
           onClick={() => navegarMes(-1)}
-          className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
           aria-label="Mês anterior"
         >
           <ChevronLeft className="w-5 h-5" />
@@ -569,7 +593,7 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
 
         <button
           onClick={() => navegarMes(1)}
-          className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
           aria-label="Próximo mês"
         >
           <ChevronRight className="w-5 h-5" />
@@ -626,14 +650,23 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
           Carregando contas...
         </div>
       ) : parcelasFiltradas.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 text-center border border-slate-200 dark:border-slate-800">
-          <Sparkles className="w-8 h-8 text-blue-500 mx-auto mb-2 opacity-60" />
-          <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-            Nenhuma despesa encontrada
-          </p>
-          <p className="text-xs text-slate-400 mt-1">
-            Clique no botão abaixo para adicionar um pagamento.
-          </p>
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 text-center border border-slate-200 dark:border-slate-800 space-y-3">
+          <Sparkles className="w-8 h-8 text-blue-500 mx-auto opacity-60" />
+          <div>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+              Nenhuma conta encontrada neste mês
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              Toque no botão abaixo para adicionar um pagamento.
+            </p>
+          </div>
+          <button
+            onClick={onNovaConta}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer min-h-[44px]"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>+ Adicionar Conta</span>
+          </button>
         </div>
       ) : (
         <div className="space-y-2.5">

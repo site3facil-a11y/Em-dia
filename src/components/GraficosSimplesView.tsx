@@ -132,7 +132,7 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
         </div>
 
         <p className="text-xs text-slate-500">
-          Veja quanto foi gasto nos <strong>2 meses anteriores</strong>, acompanhe o <strong>mês atual</strong> e antecipe o que já está comprometido para os <strong>próximos 2 meses</strong>.
+          Veja quanto foi gasto nos <strong>2 meses anteriores</strong>, acompanhe o <strong>mês atual</strong> e antecipe os <strong>gastos futuros</strong> para os <strong>próximos 2 meses</strong>.
         </p>
 
         {/* Componente Gráfico dos 5 Meses */}
@@ -163,7 +163,7 @@ export const GraficosSimplesView: React.FC<GraficosSimplesViewProps> = ({
               <ArrowUpRight className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[11px] text-slate-500 block">Previsão Comprometida para os Próximos 2 Meses</span>
+              <span className="text-[11px] text-slate-500 block">Gastos Futuros (Próximos 2 Meses)</span>
               <strong className="font-mono text-sm text-indigo-700 dark:text-indigo-300">
                 {formatarMoeda(totalComprometidoFuturo)}
               </strong>

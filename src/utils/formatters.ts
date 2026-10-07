@@ -83,6 +83,10 @@ export function getStatusInfo(status: StatusParcela) {
 
 export function dispararConfetes() {
   try {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (prefersReduced) return;
+    }
     confetti({
       particleCount: 80,
       spread: 70,
