@@ -6,12 +6,13 @@
 import initSqlJs, { Database } from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { getHojeIso } from '../utils/dates';
+import { exportarOuCompartilharArquivo } from '../utils/fileExport';
 
 export const DB_NAME = 'contas_a_pagar_db';
 export const IDB_STORE = 'sqlite_store';
 export const IDB_KEY = 'sqlite_binary';
 export const IDB_BACKUP_KEY = 'em_dia_backup_pre_migracao';
-export const SCHEMA_VERSAO_ATUAL = 6;
+export const SCHEMA_VERSAO_ATUAL = 7;
 
 let dbInstance: Database | null = null;
 let initPromise: Promise<Database> | null = null;
@@ -420,6 +421,38 @@ export function executarMigracoes(db: Database) {
     definirVersaoSchema(db, 6);
   }
 
+  // Migração 7: Remove valores e lançamentos de exemplo pré-carregados (ex: Supermercado Mensal R$ 65.000,00 / R$ 650,00 e Férias de Verão) para deixar o app limpo e sem valores
+  if (versao < 7) {
+    try {
+      db.run('PRAGMA foreign_keys = OFF;');
+      db.run(`
+        DELETE FROM parcelas 
+        WHERE conta_id IN (
+          SELECT id FROM contas 
+          WHERE (descricao = 'Supermercado Mensal' AND observacoes = 'Compras para despensa')
+             OR valor_total IN (65000, 6500000)
+        );
+      `);
+      db.run(`
+        DELETE FROM contas 
+        WHERE (descricao = 'Supermercado Mensal' AND observacoes = 'Compras para despensa')
+           OR valor_total IN (65000, 6500000);
+      `);
+      db.run(`
+        DELETE FROM cofrinho_depositos 
+        WHERE cofrinho_id IN (
+          SELECT id FROM cofrinhos WHERE nome = 'Férias de Verão'
+        );
+      `);
+      db.run("DELETE FROM cofrinhos WHERE nome = 'Férias de Verão';");
+      db.run('PRAGMA foreign_keys = ON;');
+    } catch (err) {
+      console.warn('Aviso durante migração 7 de limpeza de dados de exemplo:', err);
+    }
+    versao = 7;
+    definirVersaoSchema(db, 7);
+  }
+
   // Reativa PRAGMA foreign_keys = ON
   db.run('PRAGMA foreign_keys = ON;');
 }
@@ -514,20 +547,11 @@ export async function getDb(): Promise<Database> {
       throw new DatabaseInitError('PRAGMA foreign_keys', err);
     }
 
-    // ETAPA 6: Seed se banco completamente vazio
+    // ETAPA 6: Inicialização se banco vazio (apenas categorias padrão, sem lançamentos ou contas de exemplo)
     try {
-      const res = db.exec('SELECT COUNT(*) as total FROM contas;');
-      const count = (res[0]?.values[0]?.[0] as number) ?? 0;
-
-      if (count === 0) {
-        const resCof = db.exec('SELECT COUNT(*) as total FROM cofrinhos;');
-        const countCof = (resCof[0]?.values[0]?.[0] as number) ?? 0;
-        if (countCof === 0) {
-          await popularDadosIniciais(db);
-        }
-      }
+      recriarCategoriasPadrao(db);
     } catch (err: any) {
-      console.warn('Aviso ao conferir seed de dados iniciais:', err);
+      console.warn('Aviso ao inicializar categorias padrão:', err);
     }
 
     // ETAPA 7: Persistência inicial
@@ -670,35 +694,38 @@ export async function verificarPersistenciaStorage(): Promise<boolean> {
 }
 
 /**
- * Exporta o arquivo binário .sqlite real nomeado com a data local: em-dia-YYYY-MM-DD.sqlite
+ * Exporta o arquivo binário .sqlite real nomeado com a data local: em-dia-YYYY-MM-DD.sqlite.
+ * No ambiente nativo do Android/iOS (Capacitor), grava em Directory.Cache e abre a folha de compartilhamento.
+ * No ambiente web tradicional, executa o download do arquivo via Blob e tag <a>.
  */
-export async function exportarArquivoSqlite(): Promise<void> {
+export async function exportarArquivoSqlite(): Promise<string> {
   await persistirDbImediato();
   const db = await getDb();
   const binaryArray = db.export();
-  const blob = new Blob([binaryArray.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
 
   const hoje = getHojeIso();
   const fileName = `em-dia-${hoje}.sqlite`;
 
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
+  await exportarOuCompartilharArquivo({
+    fileName,
+    data: binaryArray,
+    mimeType: 'application/x-sqlite3',
+    dialogTitle: 'Salvar backup',
+    title: fileName,
+  });
 
   // Registra a data do último backup para lembretes de 30 dias
   try {
     localStorage.setItem('em_dia_ultimo_backup_sqlite', hoje);
   } catch {}
+
+  return fileName;
 }
 
 /**
  * Exporta os bytes SQLite armazenados para recuperação de emergência (mesmo com erro)
  */
-export async function exportarBytesRecuperacao(): Promise<void> {
+export async function exportarBytesRecuperacao(): Promise<string> {
   let bytes: Uint8Array | null = null;
   if (dbInstance) {
     try {
@@ -716,17 +743,18 @@ export async function exportarBytesRecuperacao(): Promise<void> {
     throw new Error('Nenhum dado encontrado para exportação de emergência.');
   }
 
-  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
   const hoje = getHojeIso();
   const fileName = `em-dia-recuperacao-${hoje}.sqlite`;
 
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
+  await exportarOuCompartilharArquivo({
+    fileName,
+    data: bytes,
+    mimeType: 'application/x-sqlite3',
+    dialogTitle: 'Salvar backup',
+    title: fileName,
+  });
+
+  return fileName;
 }
 
 /**
@@ -839,7 +867,7 @@ export async function limparBancoDeDados(): Promise<void> {
 }
 
 /**
- * Popula dados de exemplo realistas em CENTAVOS (INTEGER)
+ * Inicializa dados iniciais (apenas categorias padrão, sem lançamentos ou contas de exemplo pré-carregadas)
  */
 export async function popularDadosIniciais(db?: Database): Promise<void> {
   const targetDb = db || (await getDb());
@@ -852,53 +880,9 @@ export async function popularDadosIniciais(db?: Database): Promise<void> {
   targetDb.run('DELETE FROM categorias;');
   targetDb.run('DELETE FROM sqlite_sequence;');
 
-  const categorias = [
-    { nome: 'Gastos', cor: '#2563eb' },
-    { nome: 'Economias', cor: '#10b981' },
-    { nome: 'Reservas', cor: '#f59e0b' },
-  ];
-
-  for (const cat of categorias) {
-    targetDb.run('INSERT INTO categorias (nome, cor) VALUES (?, ?);', [cat.nome, cat.cor]);
-  }
-
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-
-  const formatDateStr = (year: number, month: number, day: number): string => {
-    const d = new Date(year, month, day);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
-
-  // 1. Despesa única: Supermercado R$ 650,00 (65000 centavos)
-  targetDb.run(
-    `INSERT INTO contas (id, descricao, categoria_id, valor_total, tipo, forma_pagamento, observacoes, data_criacao)
-     VALUES (1, 'Supermercado Mensal', 1, 65000, 'unica', 'Geral', 'Compras para despensa', ?);`,
-    [formatDateStr(y, m, 1)]
-  );
-  targetDb.run(
-    `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-     VALUES (1, 1, 1, 65000, ?, ?, 'pago', 65000);`,
-    [formatDateStr(y, m, 5), formatDateStr(y, m, 5)]
-  );
-
-  // 2. Cofrinho dedicado: Viagem de Férias (R$ 2.400,00 em 12x de R$ 200,00)
-  targetDb.run(
-    `INSERT INTO cofrinhos (id, nome, valor_meta, total_parcelas, valor_parcela, data_inicio, concluido, data_criacao)
-     VALUES (1, 'Férias de Verão', 240000, 12, 20000, ?, 0, ?);`,
-    [formatDateStr(y, m, 1), formatDateStr(y, m, 1)]
-  );
-  // Primeiro depósito realizado de R$ 200,00
-  targetDb.run(
-    `INSERT INTO cofrinho_depositos (cofrinho_id, valor, data_deposito, observacao)
-     VALUES (1, 20000, ?, 'Primeiro depósito mensal');`,
-    [formatDateStr(y, m, 2)]
-  );
-
+  recriarCategoriasPadrao(targetDb);
   targetDb.run('PRAGMA foreign_keys = ON;');
+
+  await persistirDbImediato();
 }
 

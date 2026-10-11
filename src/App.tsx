@@ -55,6 +55,7 @@ import {
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
 import { obterParcelasLembreteHoje } from './utils/lembretes';
+import { executarCopiaAutomaticaSemanalSeNecessario } from './utils/copiaAutomatica';
 
 export default function App() {
   // Modo Escuro (segue o sistema por padrão, com opção manual)
@@ -162,7 +163,13 @@ export default function App() {
         console.warn('Aviso ao verificar parcelas na inicialização:', err);
       });
 
-    // Item 5: Lembrete exibido dentro do app na abertura (contas que vencem hoje ou atrasadas)
+    // Cópia automática semanal do banco de dados (Item 5)
+    executarCopiaAutomaticaSemanalSeNecessario()
+      .catch((err) => {
+        console.warn('Aviso ao executar cópia automática semanal:', err);
+      });
+
+    // Lembrete exibido dentro do app na abertura (contas que vencem hoje ou atrasadas)
     if (!lembretesAberturaExibidosRef.current) {
       lembretesAberturaExibidosRef.current = true;
       listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {

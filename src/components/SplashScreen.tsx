@@ -145,8 +145,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
   const handleExportarRecuperacao = async () => {
     try {
       setExecutandoAcao(true);
-      await exportarBytesRecuperacao();
-      setMsgSucesso('Download do arquivo .sqlite de recuperação iniciado!');
+      const fileName = await exportarBytesRecuperacao();
+      setMsgSucesso(`Arquivo de recuperação "${fileName}" exportado com sucesso!`);
       setTimeout(() => setMsgSucesso(null), 4000);
     } catch (expErr: any) {
       alert('Não foi possível exportar: ' + (expErr?.message || 'Arquivo não encontrado.'));

@@ -16,6 +16,7 @@ import {
   ChevronUp,
   Wrench,
   X,
+  RotateCcw,
 } from 'lucide-react';
 import {
   exportarArquivoSqlite,
@@ -32,6 +33,12 @@ import {
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
 import { compararVersoes } from '../utils/versao';
 import { obterContasComLembrete } from '../utils/lembretes';
+import { exportarOuCompartilharArquivo } from '../utils/fileExport';
+import {
+  obterInfoUltimaCopiaAutomatica,
+  carregarBufferUltimaCopiaAutomatica,
+  InfoCopiaAutomatica,
+} from '../utils/copiaAutomatica';
 
 interface ConfiguracoesViewProps {
   darkMode?: boolean;
@@ -64,6 +71,11 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
   const [bufferRestauracao, setBufferRestauracao] = useState<ArrayBuffer | null>(null);
   const [nomeArquivoRestauracao, setNomeArquivoRestauracao] = useState<string>('');
+  const [infoUltimaCopia, setInfoUltimaCopia] = useState<InfoCopiaAutomatica | null>(null);
+
+  useEffect(() => {
+    obterInfoUltimaCopiaAutomatica().then(setInfoUltimaCopia);
+  }, []);
 
   const [diasDesdeUltimoBackup, setDiasDesdeUltimoBackup] = useState<number | null>(() => {
     try {
@@ -196,10 +208,11 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const handleBackupSqlite = async () => {
     try {
       setProcessando(true);
-      await exportarArquivoSqlite();
-      notificarSucesso('Backup do banco SQLite (.sqlite) baixado com sucesso!');
+      setErro(null);
+      const fileName = await exportarArquivoSqlite();
+      notificarSucesso(`Backup "${fileName}" concluído com sucesso!`);
     } catch (err: any) {
-      setErro('Falha ao exportar banco de dados SQLite: ' + err.message);
+      setErro('Falha ao exportar banco de dados SQLite: ' + (err?.message || 'Erro desconhecido.'));
     } finally {
       setProcessando(false);
     }
@@ -212,9 +225,10 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
     try {
       setProcessando(true);
+      setErro(null);
       const buffer = await file.arrayBuffer();
       if (!validarCabecalhoSqlite(buffer)) {
-        setErro('Arquivo inválido: o arquivo selecionado não é um banco de dados SQLite válido (cabeçalho SQLite format 3 ausente).');
+        setErro('Arquivo inválido: o cabeçalho "SQLite format 3" não foi encontrado no arquivo selecionado.');
         e.target.value = '';
         return;
       }
@@ -222,10 +236,36 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       setNomeArquivoRestauracao(file.name);
       setModalRestaurarAberto(true);
     } catch (err: any) {
-      setErro('Erro ao ler arquivo: ' + err.message);
+      setErro('Erro ao ler arquivo: ' + (err?.message || 'Falha ao processar arquivo.'));
     } finally {
       setProcessando(false);
       e.target.value = '';
+    }
+  };
+
+  // Restaurar última cópia automática semanal
+  const handleRestaurarUltimaCopiaAutomatica = async () => {
+    try {
+      setProcessando(true);
+      setErro(null);
+      const copia = await carregarBufferUltimaCopiaAutomatica();
+      if (!copia) {
+        setErro('Nenhuma cópia automática foi encontrada no armazenamento.');
+        return;
+      }
+
+      if (!validarCabecalhoSqlite(copia.buffer)) {
+        setErro('Arquivo de cópia automática inválido: o cabeçalho "SQLite format 3" não foi encontrado.');
+        return;
+      }
+
+      setBufferRestauracao(copia.buffer);
+      setNomeArquivoRestauracao(copia.nome);
+      setModalRestaurarAberto(true);
+    } catch (err: any) {
+      setErro('Falha ao obter cópia automática: ' + (err?.message || 'Erro ao carregar cópia.'));
+    } finally {
+      setProcessando(false);
     }
   };
 
@@ -239,8 +279,11 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       }
       await restaurarArquivoSqlite(bufferRestauracao);
       await onDadosModificados();
+      const nomeRestaurado = nomeArquivoRestauracao;
       setBufferRestauracao(null);
-      notificarSucesso('Banco de dados SQLite restaurado com sucesso a partir do arquivo!');
+      setNomeArquivoRestauracao('');
+      notificarSucesso(`Banco de dados SQLite restaurado com sucesso a partir de "${nomeRestaurado}"!`);
+      obterInfoUltimaCopiaAutomatica().then(setInfoUltimaCopia);
     } catch (err: any) {
       setErro('Erro ao restaurar banco: ' + (err.message || 'Arquivo inválido.'));
     } finally {
@@ -252,20 +295,22 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const handleExportarCsv = async () => {
     try {
       setProcessando(true);
+      setErro(null);
       const csvContent = await gerarCsvParcelas();
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
       const hoje = new Date().toISOString().slice(0, 10);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `relatorio_contas_parcelas_${hoje}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      notificarSucesso('Relatório em formato CSV exportado com sucesso!');
+      const fileName = `relatorio_contas_parcelas_${hoje}.csv`;
+
+      await exportarOuCompartilharArquivo({
+        fileName,
+        data: csvContent,
+        mimeType: 'text/csv;charset=utf-8;',
+        dialogTitle: 'Salvar backup',
+        title: fileName,
+      });
+
+      notificarSucesso(`Relatório "${fileName}" exportado com sucesso!`);
     } catch (err: any) {
-      setErro('Erro ao gerar CSV: ' + err.message);
+      setErro('Falha ao exportar relatório CSV: ' + (err?.message || 'Erro desconhecido.'));
     } finally {
       setProcessando(false);
     }
@@ -530,6 +575,23 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
               <span>Restaurar Arquivo .sqlite</span>
             </button>
           </div>
+        </div>
+
+        {/* Restaurar Última Cópia Automática (Item 5) */}
+        <div>
+          <button
+            onClick={handleRestaurarUltimaCopiaAutomatica}
+            disabled={processando}
+            className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 font-semibold text-xs transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Restaurar última cópia automática</span>
+            {infoUltimaCopia && (
+              <span className="text-[11px] font-normal text-indigo-600/80 dark:text-indigo-400/80">
+                ({infoUltimaCopia.dataFormatada})
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Exportação CSV */}
