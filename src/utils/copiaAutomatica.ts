@@ -14,6 +14,33 @@ export interface InfoCopiaAutomatica {
  * Executa uma cópia automática do banco de dados para Directory.Data uma vez por semana ao abrir o app,
  * mantendo apenas as 3 últimas cópias gravadas.
  */
+export async function salvarCopiaSegurancaSilenciosa(): Promise<string> {
+  // Garante que o banco em memória está gravado no IndexedDB
+  await persistirDbImediato();
+  const db = await getDb();
+  const binaryArray = db.export();
+
+  if (!binaryArray || binaryArray.length === 0) {
+    throw new Error('Banco SQLite vazio ou não carregado.');
+  }
+
+  // Formata o nome do arquivo com timestamp ISO: auto-backup-YYYY-MM-DDTHH-mm-ss.sqlite
+  const dataIsoFormatada = new Date().toISOString().replace(/[:.]/g, '-');
+  const fileName = `auto-backup-${dataIsoFormatada}.sqlite`;
+  const base64Data = uint8ArrayToBase64(binaryArray);
+
+  // Grava no Directory.Data (armazenamento persistente privado do app) sem abrir folha de compartilhamento
+  await Filesystem.writeFile({
+    path: fileName,
+    data: base64Data,
+    directory: Directory.Data,
+  });
+
+  // Mantém apenas as 3 últimas cópias
+  await limparCopiasExcedentes();
+  return fileName;
+}
+
 export async function executarCopiaAutomaticaSemanalSeNecessario(): Promise<boolean> {
   try {
     const agora = Date.now();
@@ -25,29 +52,7 @@ export async function executarCopiaAutomaticaSemanalSeNecessario(): Promise<bool
       return false;
     }
 
-    // Garante que o banco em memória está gravado no IndexedDB
-    await persistirDbImediato();
-    const db = await getDb();
-    const binaryArray = db.export();
-
-    if (!binaryArray || binaryArray.length === 0) {
-      return false;
-    }
-
-    // Formata o nome do arquivo com timestamp ISO: auto-backup-YYYY-MM-DDTHH-mm-ss.sqlite
-    const dataIsoFormatada = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `auto-backup-${dataIsoFormatada}.sqlite`;
-    const base64Data = uint8ArrayToBase64(binaryArray);
-
-    // Grava no Directory.Data (armazenamento persistente privado do app)
-    await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: Directory.Data,
-    });
-
-    // Mantém apenas as 3 últimas cópias
-    await limparCopiasExcedentes();
+    await salvarCopiaSegurancaSilenciosa();
 
     // Registra a data da cópia
     localStorage.setItem(CHAVE_ULTIMA_COPIA_TS, String(agora));

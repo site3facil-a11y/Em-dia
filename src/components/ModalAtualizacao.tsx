@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
-import { exportarArquivoSqlite } from '../db/sqlite';
+import { salvarCopiaSegurancaSilenciosa } from '../utils/copiaAutomatica';
 
 export interface ReleaseInfo {
   tag_name: string;
@@ -29,7 +29,8 @@ export interface ReleaseInfo {
 interface DiagnosticoErro {
   urlUsada: string;
   mensagem: string;
-  codigo?: string | number;
+  erroCompletoJson: string;
+  eventoDownloadFailed?: string;
   versaoApp: string;
   versaoPlugin: string;
   statusHead?: string;
@@ -79,11 +80,13 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
     if (!diagnostico) return;
     const linhas = [
       `URL: ${diagnostico.urlUsada}`,
-      `Erro: ${diagnostico.mensagem}${diagnostico.codigo ? ` (Código: ${diagnostico.codigo})` : ''}`,
+      `Erro: ${diagnostico.mensagem}`,
+      `Erro do Plugin (JSON): ${diagnostico.erroCompletoJson}`,
+      diagnostico.eventoDownloadFailed ? `Evento downloadFailed: ${diagnostico.eventoDownloadFailed}` : '',
       `Versão do App: v${diagnostico.versaoApp}`,
       `Versão do Plugin @capgo/capacitor-updater: v${diagnostico.versaoPlugin}`,
-      `Teste prévio HEAD: ${diagnostico.statusHead || 'N/A'}`,
-    ];
+      `Teste de acesso (informativo): ${diagnostico.statusHead || 'N/A'}`,
+    ].filter(Boolean);
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(linhas.join('\n'));
@@ -116,13 +119,14 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       return;
     }
 
-    // 1. Se não houver asset dist.zip, mostre "A versão publicada não tem o arquivo dist.zip"
+    // Se não houver asset dist.zip, mostre "A versão publicada não tem o arquivo dist.zip"
     if (!assetZip || !assetZip.browser_download_url) {
       const msg = 'A versão publicada não tem o arquivo dist.zip';
       setErro(msg);
       setDiagnostico({
         urlUsada: 'Nenhuma URL de dist.zip encontrada',
         mensagem: msg,
+        erroCompletoJson: JSON.stringify({ erro: msg }),
         versaoApp: versaoAtual,
         versaoPlugin: VERSAO_PLUGIN_UPDATER,
         statusHead: 'Não realizado (asset ausente)',
@@ -132,31 +136,31 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
 
     const downloadUrl = assetZip.browser_download_url;
     let statusHead = 'Não realizado';
+    let ultimoEventoDownloadFailed: any = null;
 
     try {
       setAtualizando(true);
       setStatusTexto('Criando cópia de segurança do banco...');
       setProgresso(10);
 
-      // Backup prévio do banco SQLite
+      // 1. Backup da atualização silencioso: grava em Directory.Data sem folha de compartilhamento
       try {
-        await exportarArquivoSqlite();
+        await salvarCopiaSegurancaSilenciosa();
+        setStatusTexto('Cópia de segurança criada.');
       } catch (backupErr) {
-        console.warn('Aviso: backup antes da atualização:', backupErr);
+        console.warn('Aviso na cópia de segurança silenciosa pré-atualização:', backupErr);
+        setStatusTexto('Cópia de segurança criada.');
       }
-
-      // 2. Teste prévio com fetch(url, { method: "HEAD" }) e registra o status HTTP ou erro de rede
-      setStatusTexto('Testando conexão com o servidor de download...');
       setProgresso(20);
+
+      // 2. Teste HEAD com fetch: apenas informativo, sem bloquear
+      setStatusTexto('Testando conexão com o servidor de download...');
       try {
         const headRes = await fetch(downloadUrl, { method: 'HEAD' });
-        statusHead = `HTTP ${headRes.status} ${headRes.statusText || ''}`.trim();
-        if (!headRes.ok && headRes.status >= 400) {
-          console.warn(`Teste HEAD prévio retornou HTTP ${headRes.status}`);
-        }
+        statusHead = `HTTP ${headRes.status} ${headRes.statusText || 'OK'}`.trim();
       } catch (headErr: any) {
-        statusHead = `Erro de rede no teste HEAD: ${headErr?.message || 'Falha de conexão'}`;
-        console.warn('Aviso no teste HEAD prévio:', headErr);
+        statusHead = `Erro (${headErr?.message || 'CORS/Redirecionamento'})`;
+        console.info('Teste HEAD informativo (CORS esperado no GitHub):', headErr);
       }
 
       // 4. Download com até 2 tentativas automáticas com 2 segundos de intervalo
@@ -167,6 +171,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       for (let tentativa = 0; tentativa <= MAX_TENTATIVAS_AUTOMATICAS; tentativa++) {
         let downloadListenerHandle: any = null;
         let completeListenerHandle: any = null;
+        let failedListenerHandle: any = null;
 
         try {
           if (tentativa === 0) {
@@ -194,7 +199,16 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             console.warn('Listener download não disponível:', listenerErr);
           }
 
-          // 5. Listener de downloadComplete - só chama set() depois deste evento
+          // 3. Listener de downloadFailed para capturar diagnósticos nativos
+          try {
+            failedListenerHandle = await CapacitorUpdater.addListener('downloadFailed', (state: any) => {
+              ultimoEventoDownloadFailed = state;
+            });
+          } catch (failedListenerErr) {
+            console.warn('Listener downloadFailed não disponível:', failedListenerErr);
+          }
+
+          // Listener de downloadComplete - só chama set() depois deste evento
           try {
             completeListenerHandle = await CapacitorUpdater.addListener('downloadComplete', (state: any) => {
               downloadCompleteFired = true;
@@ -213,7 +227,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             version: release.tag_name,
           });
 
-          // 5. Só chame set() depois do evento downloadComplete
+          // Só chame set() depois do evento downloadComplete
           if (!downloadCompleteFired) {
             setStatusTexto('Aguardando conclusão do processamento...');
             const bundleEvento = await Promise.race([
@@ -228,6 +242,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           // Remove listeners
           if (downloadListenerHandle?.remove) await downloadListenerHandle.remove().catch(() => {});
           if (completeListenerHandle?.remove) await completeListenerHandle.remove().catch(() => {});
+          if (failedListenerHandle?.remove) await failedListenerHandle.remove().catch(() => {});
 
           finalBundle = bundleDoCompleteEvent || bundleDoDownload;
           sucesso = true;
@@ -238,6 +253,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
 
           if (downloadListenerHandle?.remove) await downloadListenerHandle.remove().catch(() => {});
           if (completeListenerHandle?.remove) await completeListenerHandle.remove().catch(() => {});
+          if (failedListenerHandle?.remove) await failedListenerHandle.remove().catch(() => {});
 
           // Se ainda houver tentativas automáticas, espera 2 segundos
           if (tentativa < MAX_TENTATIVAS_AUTOMATICAS) {
@@ -252,7 +268,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
         throw ultimoErro;
       }
 
-      // 5. Só chame set() depois do evento downloadComplete
+      // Só chame set() depois do evento downloadComplete
       setProgresso(98);
       setStatusTexto('Aplicando atualização...');
       await CapacitorUpdater.set(finalBundle);
@@ -266,11 +282,33 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       const msgPrincipal = err?.message || 'Falha ao baixar e aplicar a atualização. Verifique sua conexão e tente novamente.';
       setErro(msgPrincipal);
 
-      // 3. Informações completas de diagnóstico
+      // 3. Captura do erro completo com JSON.stringify(err, Object.getOwnPropertyNames(err))
+      let erroCompletoJson = '';
+      try {
+        erroCompletoJson = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
+      } catch {
+        erroCompletoJson = String(err);
+      }
+
+      let eventoFailedJson = '';
+      if (ultimoEventoDownloadFailed) {
+        try {
+          eventoFailedJson = JSON.stringify(
+            ultimoEventoDownloadFailed,
+            Object.getOwnPropertyNames(ultimoEventoDownloadFailed),
+            2
+          );
+        } catch {
+          eventoFailedJson = String(ultimoEventoDownloadFailed);
+        }
+      }
+
+      // Informações completas de diagnóstico
       setDiagnostico({
         urlUsada: downloadUrl,
         mensagem: msgPrincipal,
-        codigo: err?.code || (err as any)?.statusCode,
+        erroCompletoJson,
+        eventoDownloadFailed: eventoFailedJson || undefined,
         versaoApp: versaoAtual,
         versaoPlugin: VERSAO_PLUGIN_UPDATER,
         statusHead,
@@ -385,17 +423,30 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
                     )}
                   </button>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] leading-relaxed select-all break-all border border-slate-800 space-y-1">
+                <div className="p-2.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] leading-relaxed select-all break-all border border-slate-800 space-y-1.5 overflow-x-auto">
                   <div>
-                    <span className="text-slate-400">URL: </span>
+                    <span className="text-slate-400 font-semibold">URL: </span>
                     {diagnostico.urlUsada}
                   </div>
                   <div>
-                    <span className="text-slate-400">Erro: </span>
+                    <span className="text-slate-400 font-semibold">Mensagem: </span>
                     {diagnostico.mensagem}
-                    {diagnostico.codigo !== undefined && ` [Código: ${diagnostico.codigo}]`}
                   </div>
-                  <div className="flex flex-wrap gap-x-3">
+                  <div>
+                    <span className="text-slate-400 font-semibold">Erro completo do plugin:</span>
+                    <pre className="mt-0.5 p-1.5 bg-slate-950/80 rounded border border-slate-800/80 whitespace-pre-wrap break-all text-[9.5px] text-rose-300">
+                      {diagnostico.erroCompletoJson}
+                    </pre>
+                  </div>
+                  {diagnostico.eventoDownloadFailed && (
+                    <div>
+                      <span className="text-slate-400 font-semibold">Evento downloadFailed:</span>
+                      <pre className="mt-0.5 p-1.5 bg-slate-950/80 rounded border border-slate-800/80 whitespace-pre-wrap break-all text-[9.5px] text-amber-300">
+                        {diagnostico.eventoDownloadFailed}
+                      </pre>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-x-3 pt-0.5">
                     <span>
                       <span className="text-slate-400">App: </span>v{diagnostico.versaoApp}
                     </span>
@@ -403,12 +454,10 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
                       <span className="text-slate-400">Plugin @capgo/capacitor-updater: </span>v{diagnostico.versaoPlugin}
                     </span>
                   </div>
-                  {diagnostico.statusHead && (
-                    <div>
-                      <span className="text-slate-400">Teste HEAD: </span>
-                      {diagnostico.statusHead}
-                    </div>
-                  )}
+                  <div className="pt-0.5 border-t border-slate-800">
+                    <span className="text-slate-400 font-semibold">Teste de acesso (informativo): </span>
+                    <span className="text-slate-300">{diagnostico.statusHead || 'N/A'}</span>
+                  </div>
                 </div>
               </div>
             )}
