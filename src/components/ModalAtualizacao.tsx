@@ -16,7 +16,13 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { salvarCopiaSegurancaSilenciosa } from '../utils/copiaAutomatica';
 
 export interface ReleaseInfo {
-  tag_name: string;
+  version: string;
+  url: string;
+  size?: number;
+  notes?: string;
+  nomeArquivo?: string;
+  // Campos legados para compatibilidade com a API de Releases do GitHub
+  tag_name?: string;
   name?: string;
   body?: string;
   assets?: Array<{
@@ -69,12 +75,23 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
 
   if (!aberto || !release) return null;
 
-  // 1. Antes de baixar, busque o asset "dist.zip" na lista assets da resposta da API
-  const assetZip = release.assets?.find(
-    (a) => a.name?.toLowerCase() === 'dist.zip'
-  );
-  const temAssetZip = Boolean(assetZip && assetZip.browser_download_url);
-  const tamanhoFormatado = assetZip?.size ? formatarTamanhoBytes(assetZip.size) : null;
+  // Informações da versão e URL direta (prioriza o JSON de version.json do GitHub Pages)
+  const novaVersao = release.version || release.tag_name || '';
+  const downloadUrl =
+    release.url ||
+    release.assets?.find((a) => a.name?.toLowerCase() === 'dist.zip')?.browser_download_url ||
+    '';
+
+  const tamanhoBytes =
+    release.size ??
+    release.assets?.find((a) => a.name?.toLowerCase() === 'dist.zip')?.size;
+  const tamanhoFormatado = tamanhoBytes ? formatarTamanhoBytes(tamanhoBytes) : null;
+
+  const nomeArquivo =
+    release.nomeArquivo ||
+    (downloadUrl ? downloadUrl.split('/').pop()?.split('?')[0] : 'dist.zip');
+
+  const notasVersao = release.notes || release.body || '';
 
   const handleCopiarDiagnostico = async () => {
     if (!diagnostico) return;
@@ -99,12 +116,11 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
   };
 
   const handleAbrirNoNavegador = () => {
-    const url = assetZip?.browser_download_url;
-    if (!url) return;
+    if (!downloadUrl) return;
     try {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
     } catch {
-      window.location.href = url;
+      window.location.href = downloadUrl;
     }
   };
 
@@ -119,22 +135,21 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       return;
     }
 
-    // Se não houver asset dist.zip, mostre "A versão publicada não tem o arquivo dist.zip"
-    if (!assetZip || !assetZip.browser_download_url) {
-      const msg = 'A versão publicada não tem o arquivo dist.zip';
+    // Se não houver URL de download válida
+    if (!downloadUrl) {
+      const msg = 'A versão publicada não tem arquivo para download';
       setErro(msg);
       setDiagnostico({
-        urlUsada: 'Nenhuma URL de dist.zip encontrada',
+        urlUsada: 'Nenhuma URL de download encontrada',
         mensagem: msg,
         erroCompletoJson: JSON.stringify({ erro: msg }),
         versaoApp: versaoAtual,
         versaoPlugin: VERSAO_PLUGIN_UPDATER,
-        statusHead: 'Não realizado (asset ausente)',
+        statusHead: 'Não realizado (URL ausente)',
       });
       return;
     }
 
-    const downloadUrl = assetZip.browser_download_url;
     let statusHead = 'Não realizado';
     let ultimoEventoDownloadFailed: any = null;
 
@@ -199,7 +214,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             console.warn('Listener download não disponível:', listenerErr);
           }
 
-          // 3. Listener de downloadFailed para capturar diagnósticos nativos
+          // Listener de downloadFailed para capturar diagnósticos nativos
           try {
             failedListenerHandle = await CapacitorUpdater.addListener('downloadFailed', (state: any) => {
               ultimoEventoDownloadFailed = state;
@@ -221,10 +236,10 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             console.warn('Listener downloadComplete não disponível:', completeListenerErr);
           }
 
-          // Executa download usando o browser_download_url do dist.zip
+          // 3. Executa download usando a URL do JSON e a versão
           const bundleDoDownload = await CapacitorUpdater.download({
             url: downloadUrl,
-            version: release.tag_name,
+            version: novaVersao,
           });
 
           // Só chame set() depois do evento downloadComplete
@@ -275,14 +290,14 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       setProgresso(100);
       setStatusTexto('Atualização concluída com sucesso!');
     } catch (err: any) {
-      console.error('Erro durante atualização pelo GitHub:', err);
+      console.error('Erro durante atualização:', err);
       setAtualizando(false);
       setProgresso(0);
 
       const msgPrincipal = err?.message || 'Falha ao baixar e aplicar a atualização. Verifique sua conexão e tente novamente.';
       setErro(msgPrincipal);
 
-      // 3. Captura do erro completo com JSON.stringify(err, Object.getOwnPropertyNames(err))
+      // Captura do erro completo com JSON.stringify(err, Object.getOwnPropertyNames(err))
       let erroCompletoJson = '';
       try {
         erroCompletoJson = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
@@ -349,24 +364,24 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               <span>v{versaoAtual}</span>
               <ArrowRight className="w-3 h-3 text-slate-400" />
               <span className="text-blue-600 dark:text-blue-400 font-bold">
-                {release.tag_name}
+                {novaVersao.startsWith('v') ? novaVersao : `v${novaVersao}`}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Informações do Arquivo dist.zip (Item 1) */}
+        {/* Informações do Arquivo */}
         <div className="mt-4">
-          {temAssetZip ? (
+          {downloadUrl ? (
             <div className="flex items-center justify-between text-xs p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <FileArchive className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                <span className="font-semibold text-slate-700 dark:text-slate-200">
-                  Arquivo: <code className="font-mono text-slate-900 dark:text-white font-bold">dist.zip</code>
+                <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                  Arquivo: <code className="font-mono text-slate-900 dark:text-white font-bold">{nomeArquivo}</code>
                 </span>
               </div>
               {tamanhoFormatado && (
-                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 flex-shrink-0 ml-2">
                   {tamanhoFormatado}
                 </span>
               )}
@@ -374,7 +389,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           ) : (
             <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
               <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <span className="font-bold">A versão publicada não tem o arquivo dist.zip</span>
+              <span className="font-bold">A versão publicada não tem arquivo para download</span>
             </div>
           )}
         </div>
@@ -387,7 +402,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           </div>
         )}
 
-        {/* Mensagem de Erro com Diagnóstico Completo (Item 3 & 4) */}
+        {/* Mensagem de Erro com Diagnóstico Completo */}
         {erro && (
           <div className="mt-3 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-200 text-xs space-y-2.5">
             <div className="flex items-start gap-2">
@@ -398,7 +413,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               </div>
             </div>
 
-            {/* Diagnóstico em letra pequena e copiável (Item 3) */}
+            {/* Diagnóstico em letra pequena e copiável */}
             {diagnostico && (
               <div className="pt-2 border-t border-rose-200/70 dark:border-rose-900/50">
                 <div className="flex items-center justify-between mb-1.5">
@@ -467,11 +482,11 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
         {/* Notas da Versão */}
         <div className="mt-4 space-y-1.5">
           <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">
-            Notas desta versão ({release.name || release.tag_name}):
+            Notas desta versão ({release.name || novaVersao}):
           </h4>
           <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-3.5 max-h-36 overflow-y-auto text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
-            {release.body?.trim() ? (
-              release.body.trim()
+            {notasVersao.trim() ? (
+              notasVersao.trim()
             ) : (
               <span className="text-slate-400 italic">
                 Melhorias de desempenho e correções gerais no app Em Dia.
@@ -499,17 +514,17 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           </div>
         )}
 
-        {/* Ações (Item 4: Tentar novamente & Abrir no navegador) */}
+        {/* Ações (Tentar novamente & Abrir no navegador) */}
         <div className="mt-6 flex flex-wrap items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
           {!atualizando ? (
             <>
-              {/* Botão Abrir no navegador (se erro ou se solicitado) */}
-              {temAssetZip && (erro || avisoNaoNativo) && (
+              {/* Botão Abrir no navegador (abre a url do JSON) */}
+              {downloadUrl && (erro || avisoNaoNativo) && (
                 <button
                   type="button"
                   onClick={handleAbrirNoNavegador}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                  title="Abre a URL de download direto do dist.zip"
+                  title="Abre a URL direta de download do pacote de atualização"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   <span>Abrir no navegador</span>
@@ -525,11 +540,11 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               </button>
 
               {erro ? (
-                /* Botão Tentar novamente quando falhar (Item 4) */
+                /* Botão Tentar novamente quando falhar */
                 <button
                   type="button"
                   onClick={handleAtualizarAgora}
-                  disabled={!temAssetZip}
+                  disabled={!downloadUrl}
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
@@ -540,7 +555,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
                 <button
                   type="button"
                   onClick={handleAtualizarAgora}
-                  disabled={!temAssetZip}
+                  disabled={!downloadUrl}
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />

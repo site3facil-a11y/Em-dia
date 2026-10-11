@@ -26,4 +26,18 @@ describe('compararVersoes e validação de releases', () => {
     const assetFaltando = assetsSemDist.find((a) => a.name.toLowerCase() === 'dist.zip');
     expect(assetFaltando).toBeUndefined();
   });
+
+  it('deve processar o payload de version.json do GitHub Pages corretamente', () => {
+    const versionPayload = {
+      version: '1.0.10',
+      url: 'https://site3facil-a11y.github.io/Em-dia/dist-1.0.10.zip',
+      size: 2450000,
+      notes: 'Melhorias de desempenho e correções gerais.',
+    };
+
+    expect(compararVersoes(versionPayload.version, '1.0.9')).toBe(1);
+    expect(compararVersoes(versionPayload.version, '1.0.10')).toBe(0);
+    expect(compararVersoes(versionPayload.version, '1.0.11')).toBe(-1);
+    expect(versionPayload.url).toContain('dist-1.0.10.zip');
+  });
 });

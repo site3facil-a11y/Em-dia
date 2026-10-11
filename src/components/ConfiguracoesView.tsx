@@ -149,45 +149,103 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
     try {
       setVerificandoAtualizacao(true);
-      const res = await fetch('https://api.github.com/repos/site3facil-a11y/Em-dia/releases/latest', {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-        },
-      });
+      let dadosAtualizacao: ReleaseInfo | null = null;
+      let falhaPages = false;
 
-      if (res.status === 404) {
-        setErro('Ainda não há nenhuma versão publicada no GitHub');
+      // 1. Consulta ao GitHub Pages com timestamp contra cache
+      try {
+        const urlPages = `https://site3facil-a11y.github.io/Em-dia/version.json?t=${Date.now()}`;
+        const resPages = await fetch(urlPages, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+          },
+        });
+
+        if (resPages.ok) {
+          const jsonPages = await resPages.json();
+          if (jsonPages?.version && jsonPages?.url) {
+            dadosAtualizacao = {
+              version: String(jsonPages.version),
+              url: String(jsonPages.url),
+              size: typeof jsonPages.size === 'number' ? jsonPages.size : undefined,
+              notes: jsonPages.notes ? String(jsonPages.notes) : undefined,
+              nomeArquivo: jsonPages.url.split('/').pop()?.split('?')[0] || 'dist.zip',
+              tag_name: String(jsonPages.version),
+              name: `Versão ${jsonPages.version}`,
+              body: jsonPages.notes,
+            };
+          } else {
+            falhaPages = true;
+          }
+        } else {
+          falhaPages = true;
+        }
+      } catch (errPages) {
+        console.warn('Consulta ao GitHub Pages falhou:', errPages);
+        falhaPages = true;
+      }
+
+      // 4. Se a consulta ao Pages falhar, usa reserva: API do GitHub Releases
+      if (falhaPages || !dadosAtualizacao) {
+        try {
+          const resGithub = await fetch('https://api.github.com/repos/site3facil-a11y/Em-dia/releases/latest', {
+            headers: {
+              Accept: 'application/vnd.github.v3+json',
+            },
+          });
+
+          if (resGithub.ok) {
+            const releaseData = await resGithub.json();
+            const assetZip = releaseData.assets?.find(
+              (a: any) => a.name?.toLowerCase() === 'dist.zip'
+            );
+            if (assetZip && assetZip.browser_download_url) {
+              dadosAtualizacao = {
+                version: releaseData.tag_name || '',
+                url: assetZip.browser_download_url,
+                size: assetZip.size,
+                notes: releaseData.body,
+                nomeArquivo: 'dist.zip',
+                tag_name: releaseData.tag_name,
+                name: releaseData.name,
+                body: releaseData.body,
+                assets: releaseData.assets,
+              };
+            }
+          }
+        } catch (errGithub) {
+          console.warn('Consulta reserva ao GitHub Releases também falhou:', errGithub);
+        }
+      }
+
+      // 6. Mensagens de erro caso não seja possível consultar
+      if (!dadosAtualizacao) {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setErro('Sem conexão com a internet');
+        } else {
+          setErro('Não foi possível consultar as atualizações');
+        }
         return;
       }
 
-      if (res.status === 403 || res.status === 429) {
-        setErro('Limite de consultas do GitHub atingido');
-        return;
-      }
-
-      if (!res.ok) {
-        setErro(`Erro ao consultar GitHub (HTTP ${res.status})`);
-        return;
-      }
-
-      const releaseData: ReleaseInfo = await res.json();
-      const temDistZip = releaseData.assets?.some((a: any) => a.name?.toLowerCase() === 'dist.zip');
-      if (!temDistZip) {
-        setErro('A versão publicada não tem o arquivo dist.zip');
-        return;
-      }
-
-      const tag = releaseData.tag_name || '';
+      // 2. Compare version com a versão atual de forma semântica
+      const tag = dadosAtualizacao.version;
       const comparacao = compararVersoes(tag, __APP_VERSION__);
       if (comparacao > 0) {
-        setReleaseEncontrada(releaseData);
+        setReleaseEncontrada(dadosAtualizacao);
         setModalAtualizacaoAberto(true);
       } else {
         notificarSucesso('Você já está na versão mais recente');
       }
     } catch (err: any) {
-      console.error('Erro ao verificar atualização no GitHub:', err);
-      setErro('Sem conexão com a internet');
+      console.error('Erro ao verificar atualizações:', err);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setErro('Sem conexão com a internet');
+      } else {
+        setErro('Não foi possível consultar as atualizações');
+      }
     } finally {
       setVerificandoAtualizacao(false);
     }
@@ -336,7 +394,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Atualizado pelo GitHub com sucesso
+                Segunda atualização pelo GitHub Pages funcionando
               </p>
             </div>
           </div>
