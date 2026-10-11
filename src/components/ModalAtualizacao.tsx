@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import { Sparkles, Download, X, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import {
+  Sparkles,
+  Download,
+  X,
+  AlertCircle,
+  ArrowRight,
+  RefreshCw,
+  ExternalLink,
+  Copy,
+  Check,
+  FileArchive,
+} from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { exportarArquivoSqlite } from '../db/sqlite';
@@ -15,11 +26,30 @@ export interface ReleaseInfo {
   }>;
 }
 
+interface DiagnosticoErro {
+  urlUsada: string;
+  mensagem: string;
+  codigo?: string | number;
+  versaoApp: string;
+  versaoPlugin: string;
+  statusHead?: string;
+}
+
 interface ModalAtualizacaoProps {
   aberto: boolean;
   onFechar: () => void;
   release: ReleaseInfo | null;
   versaoAtual: string;
+}
+
+const VERSAO_PLUGIN_UPDATER = '8.52.1';
+const MAX_TENTATIVAS_AUTOMATICAS = 2; // Até 2 tentativas automáticas adicionais (3 no total)
+
+function formatarTamanhoBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return 'Tamanho desconhecido';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
@@ -32,82 +62,219 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
   const [progresso, setProgresso] = useState<number>(0);
   const [statusTexto, setStatusTexto] = useState<string>('');
   const [erro, setErro] = useState<string | null>(null);
+  const [diagnostico, setDiagnostico] = useState<DiagnosticoErro | null>(null);
+  const [copiado, setCopiado] = useState(false);
   const [avisoNaoNativo, setAvisoNaoNativo] = useState(false);
 
   if (!aberto || !release) return null;
 
-  const novaVersaoLimpa = release.tag_name.replace(/^v/, '');
+  // 1. Antes de baixar, busque o asset "dist.zip" na lista assets da resposta da API
+  const assetZip = release.assets?.find(
+    (a) => a.name?.toLowerCase() === 'dist.zip'
+  );
+  const temAssetZip = Boolean(assetZip && assetZip.browser_download_url);
+  const tamanhoFormatado = assetZip?.size ? formatarTamanhoBytes(assetZip.size) : null;
+
+  const handleCopiarDiagnostico = async () => {
+    if (!diagnostico) return;
+    const linhas = [
+      `URL: ${diagnostico.urlUsada}`,
+      `Erro: ${diagnostico.mensagem}${diagnostico.codigo ? ` (Código: ${diagnostico.codigo})` : ''}`,
+      `Versão do App: v${diagnostico.versaoApp}`,
+      `Versão do Plugin @capgo/capacitor-updater: v${diagnostico.versaoPlugin}`,
+      `Teste prévio HEAD: ${diagnostico.statusHead || 'N/A'}`,
+    ];
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(linhas.join('\n'));
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 2000);
+      }
+    } catch (err) {
+      console.warn('Falha ao copiar diagnóstico:', err);
+    }
+  };
+
+  const handleAbrirNoNavegador = () => {
+    const url = assetZip?.browser_download_url;
+    if (!url) return;
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.location.href = url;
+    }
+  };
 
   const handleAtualizarAgora = async () => {
     setErro(null);
+    setDiagnostico(null);
     setAvisoNaoNativo(false);
 
-    // 1. Se Capacitor.isNativePlatform() for falso, mostre mensagem específica
+    // Se Capacitor.isNativePlatform() for falso, aviso específico
     if (!Capacitor.isNativePlatform()) {
       setAvisoNaoNativo(true);
       return;
     }
 
+    // 1. Se não houver asset dist.zip, mostre "A versão publicada não tem o arquivo dist.zip"
+    if (!assetZip || !assetZip.browser_download_url) {
+      const msg = 'A versão publicada não tem o arquivo dist.zip';
+      setErro(msg);
+      setDiagnostico({
+        urlUsada: 'Nenhuma URL de dist.zip encontrada',
+        mensagem: msg,
+        versaoApp: versaoAtual,
+        versaoPlugin: VERSAO_PLUGIN_UPDATER,
+        statusHead: 'Não realizado (asset ausente)',
+      });
+      return;
+    }
+
+    const downloadUrl = assetZip.browser_download_url;
+    let statusHead = 'Não realizado';
+
     try {
       setAtualizando(true);
-      setStatusTexto('Criando backup do banco SQLite...');
+      setStatusTexto('Criando cópia de segurança do banco...');
       setProgresso(10);
 
-      // 2. Faz backup automático do banco SQLite (exporta o .sqlite)
+      // Backup prévio do banco SQLite
       try {
         await exportarArquivoSqlite();
       } catch (backupErr) {
-        console.warn('Aviso: backup antes da atualização falhou ou foi bloqueado:', backupErr);
+        console.warn('Aviso: backup antes da atualização:', backupErr);
       }
 
-      setStatusTexto('Localizando pacote de atualização (dist.zip)...');
-      setProgresso(25);
-
-      const assetZip = release.assets?.find(
-        (a) => a.name.toLowerCase() === 'dist.zip'
-      );
-
-      if (!assetZip || !assetZip.browser_download_url) {
-        throw new Error('O pacote de atualização (dist.zip) não foi encontrado neste release do GitHub.');
-      }
-
-      setStatusTexto('Baixando nova versão...');
-      setProgresso(35);
-
-      // Listener para a barra de progresso do download
-      let listenerHandle: any = null;
+      // 2. Teste prévio com fetch(url, { method: "HEAD" }) e registra o status HTTP ou erro de rede
+      setStatusTexto('Testando conexão com o servidor de download...');
+      setProgresso(20);
       try {
-        listenerHandle = await CapacitorUpdater.addListener('download', (state: any) => {
-          if (typeof state?.percent === 'number') {
-            setProgresso(Math.max(35, Math.min(95, Math.round(state.percent))));
+        const headRes = await fetch(downloadUrl, { method: 'HEAD' });
+        statusHead = `HTTP ${headRes.status} ${headRes.statusText || ''}`.trim();
+        if (!headRes.ok && headRes.status >= 400) {
+          console.warn(`Teste HEAD prévio retornou HTTP ${headRes.status}`);
+        }
+      } catch (headErr: any) {
+        statusHead = `Erro de rede no teste HEAD: ${headErr?.message || 'Falha de conexão'}`;
+        console.warn('Aviso no teste HEAD prévio:', headErr);
+      }
+
+      // 4. Download com até 2 tentativas automáticas com 2 segundos de intervalo
+      let sucesso = false;
+      let ultimoErro: any = null;
+      let finalBundle: any = null;
+
+      for (let tentativa = 0; tentativa <= MAX_TENTATIVAS_AUTOMATICAS; tentativa++) {
+        let downloadListenerHandle: any = null;
+        let completeListenerHandle: any = null;
+
+        try {
+          if (tentativa === 0) {
+            setStatusTexto('Baixando nova versão...');
+          } else {
+            setStatusTexto(`Tentativa ${tentativa + 1} de ${MAX_TENTATIVAS_AUTOMATICAS + 1}: baixando...`);
           }
-        });
-      } catch (listenerErr) {
-        console.warn('Listener de progresso não suportado neste ambiente:', listenerErr);
+          setProgresso(35);
+
+          let downloadCompleteFired = false;
+          let bundleDoCompleteEvent: any = null;
+          let resolverComplete: ((b: any) => void) | null = null;
+          const promessaComplete = new Promise<any>((resolve) => {
+            resolverComplete = resolve;
+          });
+
+          // Listener de progresso percentual
+          try {
+            downloadListenerHandle = await CapacitorUpdater.addListener('download', (state: any) => {
+              if (typeof state?.percent === 'number') {
+                setProgresso(Math.max(35, Math.min(95, Math.round(state.percent))));
+              }
+            });
+          } catch (listenerErr) {
+            console.warn('Listener download não disponível:', listenerErr);
+          }
+
+          // 5. Listener de downloadComplete - só chama set() depois deste evento
+          try {
+            completeListenerHandle = await CapacitorUpdater.addListener('downloadComplete', (state: any) => {
+              downloadCompleteFired = true;
+              bundleDoCompleteEvent = state?.bundle;
+              if (resolverComplete) {
+                resolverComplete(state?.bundle);
+              }
+            });
+          } catch (completeListenerErr) {
+            console.warn('Listener downloadComplete não disponível:', completeListenerErr);
+          }
+
+          // Executa download usando o browser_download_url do dist.zip
+          const bundleDoDownload = await CapacitorUpdater.download({
+            url: downloadUrl,
+            version: release.tag_name,
+          });
+
+          // 5. Só chame set() depois do evento downloadComplete
+          if (!downloadCompleteFired) {
+            setStatusTexto('Aguardando conclusão do processamento...');
+            const bundleEvento = await Promise.race([
+              promessaComplete,
+              new Promise<any>((resolve) => setTimeout(() => resolve(null), 3000)),
+            ]);
+            if (bundleEvento) {
+              bundleDoCompleteEvent = bundleEvento;
+            }
+          }
+
+          // Remove listeners
+          if (downloadListenerHandle?.remove) await downloadListenerHandle.remove().catch(() => {});
+          if (completeListenerHandle?.remove) await completeListenerHandle.remove().catch(() => {});
+
+          finalBundle = bundleDoCompleteEvent || bundleDoDownload;
+          sucesso = true;
+          break; // Sucesso no download e evento downloadComplete!
+        } catch (downloadErr: any) {
+          ultimoErro = downloadErr;
+          console.error(`Erro no download (tentativa ${tentativa + 1}):`, downloadErr);
+
+          if (downloadListenerHandle?.remove) await downloadListenerHandle.remove().catch(() => {});
+          if (completeListenerHandle?.remove) await completeListenerHandle.remove().catch(() => {});
+
+          // Se ainda houver tentativas automáticas, espera 2 segundos
+          if (tentativa < MAX_TENTATIVAS_AUTOMATICAS) {
+            const proxima = tentativa + 2;
+            setStatusTexto(`Download falhou. Tentando novamente em 2 segundos (${proxima}/${MAX_TENTATIVAS_AUTOMATICAS + 1})...`);
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+        }
       }
 
-      // Baixa o asset dist.zip
-      const bundle = await CapacitorUpdater.download({
-        url: assetZip.browser_download_url,
-        version: release.tag_name,
-      });
-
-      if (listenerHandle?.remove) {
-        await listenerHandle.remove();
+      if (!sucesso) {
+        throw ultimoErro;
       }
 
+      // 5. Só chame set() depois do evento downloadComplete
       setProgresso(98);
       setStatusTexto('Aplicando atualização...');
-
-      // Aplica a nova versão
-      await CapacitorUpdater.set(bundle);
+      await CapacitorUpdater.set(finalBundle);
       setProgresso(100);
       setStatusTexto('Atualização concluída com sucesso!');
     } catch (err: any) {
       console.error('Erro durante atualização pelo GitHub:', err);
       setAtualizando(false);
       setProgresso(0);
-      setErro(err?.message || 'Falha ao baixar e aplicar a atualização. Verifique sua conexão e tente novamente.');
+
+      const msgPrincipal = err?.message || 'Falha ao baixar e aplicar a atualização. Verifique sua conexão e tente novamente.';
+      setErro(msgPrincipal);
+
+      // 3. Informações completas de diagnóstico
+      setDiagnostico({
+        urlUsada: downloadUrl,
+        mensagem: msgPrincipal,
+        codigo: err?.code || (err as any)?.statusCode,
+        versaoApp: versaoAtual,
+        versaoPlugin: VERSAO_PLUGIN_UPDATER,
+        statusHead,
+      });
     }
   };
 
@@ -150,30 +317,110 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           </div>
         </div>
 
-        {/* Mensagens de Aviso / Erro */}
+        {/* Informações do Arquivo dist.zip (Item 1) */}
+        <div className="mt-4">
+          {temAssetZip ? (
+            <div className="flex items-center justify-between text-xs p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
+              <div className="flex items-center gap-2">
+                <FileArchive className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                  Arquivo: <code className="font-mono text-slate-900 dark:text-white font-bold">dist.zip</code>
+                </span>
+              </div>
+              {tamanhoFormatado && (
+                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  {tamanhoFormatado}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span className="font-bold">A versão publicada não tem o arquivo dist.zip</span>
+            </div>
+          )}
+        </div>
+
+        {/* Mensagem de Aviso Não-Nativo */}
         {avisoNaoNativo && (
-          <div className="mt-4 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
+          <div className="mt-3 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span className="font-semibold">Atualização disponível apenas no app Android</span>
+            <span className="font-semibold">Atualização direta disponível apenas no app Android</span>
           </div>
         )}
 
+        {/* Mensagem de Erro com Diagnóstico Completo (Item 3 & 4) */}
         {erro && (
-          <div className="mt-4 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-200 text-xs flex items-start gap-2.5">
-            <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <strong className="block font-bold">Erro na atualização:</strong>
-              <span>{erro}</span>
+          <div className="mt-3 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-200 text-xs space-y-2.5">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <strong className="block font-bold">Falha no download da atualização:</strong>
+                <span className="text-rose-800 dark:text-rose-300 leading-snug">{erro}</span>
+              </div>
             </div>
+
+            {/* Diagnóstico em letra pequena e copiável (Item 3) */}
+            {diagnostico && (
+              <div className="pt-2 border-t border-rose-200/70 dark:border-rose-900/50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-rose-700 dark:text-rose-400">
+                    Detalhes do Diagnóstico:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopiarDiagnostico}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300 hover:underline cursor-pointer"
+                  >
+                    {copiado ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-emerald-600 dark:text-emerald-400">Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>Copiar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] leading-relaxed select-all break-all border border-slate-800 space-y-1">
+                  <div>
+                    <span className="text-slate-400">URL: </span>
+                    {diagnostico.urlUsada}
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Erro: </span>
+                    {diagnostico.mensagem}
+                    {diagnostico.codigo !== undefined && ` [Código: ${diagnostico.codigo}]`}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3">
+                    <span>
+                      <span className="text-slate-400">App: </span>v{diagnostico.versaoApp}
+                    </span>
+                    <span>
+                      <span className="text-slate-400">Plugin @capgo/capacitor-updater: </span>v{diagnostico.versaoPlugin}
+                    </span>
+                  </div>
+                  {diagnostico.statusHead && (
+                    <div>
+                      <span className="text-slate-400">Teste HEAD: </span>
+                      {diagnostico.statusHead}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* Notas da Versão */}
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 space-y-1.5">
           <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">
             Notas desta versão ({release.name || release.tag_name}):
           </h4>
-          <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-3.5 max-h-48 overflow-y-auto text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+          <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-3.5 max-h-36 overflow-y-auto text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
             {release.body?.trim() ? (
               release.body.trim()
             ) : (
@@ -188,7 +435,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
         {atualizando && (
           <div className="mt-5 space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
-              <span>{statusTexto}</span>
+              <span className="truncate pr-2">{statusTexto}</span>
               <span className="font-mono text-blue-600 dark:text-blue-400">{progresso}%</span>
             </div>
             <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700">
@@ -203,25 +450,54 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
           </div>
         )}
 
-        {/* Ações */}
-        <div className="mt-6 flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+        {/* Ações (Item 4: Tentar novamente & Abrir no navegador) */}
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
           {!atualizando ? (
             <>
+              {/* Botão Abrir no navegador (se erro ou se solicitado) */}
+              {temAssetZip && (erro || avisoNaoNativo) && (
+                <button
+                  type="button"
+                  onClick={handleAbrirNoNavegador}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Abre a URL de download direto do dist.zip"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  <span>Abrir no navegador</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={onFechar}
                 className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               >
-                Depois
+                {erro ? 'Fechar' : 'Depois'}
               </button>
-              <button
-                type="button"
-                onClick={handleAtualizarAgora}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>Atualizar agora</span>
-              </button>
+
+              {erro ? (
+                /* Botão Tentar novamente quando falhar (Item 4) */
+                <button
+                  type="button"
+                  onClick={handleAtualizarAgora}
+                  disabled={!temAssetZip}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tentar novamente</span>
+                </button>
+              ) : (
+                /* Botão Atualizar agora */
+                <button
+                  type="button"
+                  onClick={handleAtualizarAgora}
+                  disabled={!temAssetZip}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 disabled:opacity-50 text-white font-bold text-xs shadow-md shadow-blue-600/25 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Atualizar agora</span>
+                </button>
+              )}
             </>
           ) : (
             <div className="w-full text-center py-1">

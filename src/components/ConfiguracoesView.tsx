@@ -182,7 +182,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       }
 
       const releaseData: ReleaseInfo = await res.json();
-      const temDistZip = releaseData.assets?.some((a: any) => a.name === 'dist.zip');
+      const temDistZip = releaseData.assets?.some((a: any) => a.name?.toLowerCase() === 'dist.zip');
       if (!temDistZip) {
         setErro('A versão publicada não tem o arquivo dist.zip');
         return;

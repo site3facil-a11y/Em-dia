@@ -56,6 +56,7 @@ import {
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
 import { obterParcelasLembreteHoje } from './utils/lembretes';
 import { executarCopiaAutomaticaSemanalSeNecessario } from './utils/copiaAutomatica';
+import { CapacitorUpdater } from '@capgo/capacitor-updater';
 
 export default function App() {
   // Modo Escuro (segue o sistema por padrão, com opção manual)
@@ -80,6 +81,13 @@ export default function App() {
       document.body.classList.remove('dark');
     }
   }, [darkMode]);
+
+  // Notifica o plugin de atualização que o app iniciou com sucesso
+  useEffect(() => {
+    CapacitorUpdater.notifyAppReady().catch((err) => {
+      console.warn('CapacitorUpdater.notifyAppReady aviso no App:', err);
+    });
+  }, []);
 
   // Aba selecionada na barra inferior: 'inicio' | 'graficos' | 'parcelas' | 'categorias' | 'ajustes'
   const [abaAtiva, setAbaAtiva] = useState<string>('inicio');
