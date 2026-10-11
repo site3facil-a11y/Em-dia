@@ -179,6 +179,9 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
     <div
       role="status"
       aria-live="polite"
+      style={{
+        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+      }}
       className={`fixed inset-0 z-[9999] flex flex-col items-center justify-between p-6 sm:p-8 bg-gradient-to-br from-[#1E3A8A] to-[#1E1B4B] text-white select-none overflow-y-auto ${
         fading ? 'opacity-0 pointer-events-none' : 'opacity-100'
       } ${reducedMotion ? '' : 'transition-opacity duration-300'}`}

@@ -56,150 +56,56 @@ export function alternarLembrete(contaId: number): boolean {
 }
 
 /**
- * Verifica o status atual da permissão de notificação no navegador/sistema
+ * Retorna parcelas pendentes com lembrete ativo que vencem hoje ou estão atrasadas
+ * para exibição como lembrete interno dentro do aplicativo na abertura
  */
-export function verificarPermissaoNotificacao(): NotificationPermission | 'unsupported' {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
-    return 'unsupported';
-  }
-  return Notification.permission;
-}
-
-/**
- * Solicita permissão ao usuário para emitir notificações no sistema
- */
-export async function solicitarPermissaoNotificacao(): Promise<boolean> {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
-    return false;
-  }
-  try {
-    const permission = await Notification.requestPermission();
-    return permission === 'granted';
-  } catch (err) {
-    console.warn('Erro ao solicitar permissão de notificação:', err);
-    return false;
-  }
-}
-
-/**
- * Emite uma notificação local no aparelho
- */
-export async function dispararNotificacaoLocal(titulo: string, corpo: string): Promise<boolean> {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
-    return false;
-  }
-  if (Notification.permission !== 'granted') {
-    return false;
-  }
-
-  try {
-    // Tenta primeiro via Service Worker (recomendado para PWAs e Android/Chrome)
-    if ('serviceWorker' in navigator) {
-      try {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg && 'showNotification' in reg) {
-          await reg.showNotification(titulo, {
-            body: corpo,
-            icon: '/icon-192.png',
-            badge: '/icon-192.png',
-            tag: 'em-dia-lembrete-' + Date.now(),
-          });
-          return true;
-        }
-      } catch (swErr) {
-        // Fallback para new Notification padrão
-      }
-    }
-
-    new Notification(titulo, {
-      body: corpo,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      tag: 'em-dia-lembrete-' + Date.now(),
-    });
-    return true;
-  } catch (err) {
-    console.warn('Falha ao emitir notificação nativa:', err);
-    return false;
-  }
-}
-
-/**
- * Envia uma notificação de teste para verificar se o aparelho do usuário está apto
- */
-export async function testarNotificacaoLocal(): Promise<boolean> {
-  const perm = verificarPermissaoNotificacao();
-  if (perm === 'unsupported') return false;
-  if (perm !== 'granted') {
-    const permitiu = await solicitarPermissaoNotificacao();
-    if (!permitiu) return false;
-  }
-  return await dispararNotificacaoLocal(
-    '🔔 Teste de Notificação - Em Dia',
-    'Excelente! As notificações no seu aparelho estão ativas e funcionando para suas contas selecionadas.'
-  );
-}
-
-/**
- * Verifica parcelas pendentes com lembrete ativo e emite notificação para vencimentos de hoje ou em atraso
- */
-export async function verificarAlertasVencimentoHoje(
-  parcelas: Parcela[],
-  onNotificarBanco?: (parcelaId: number, dataVencimento: string) => Promise<void>
-): Promise<Parcela[]> {
-  if (typeof window === 'undefined' || !('Notification' in window)) return [];
-  if (Notification.permission !== 'granted') return [];
-
+export function obterParcelasLembreteHoje(parcelas: Parcela[]): Parcela[] {
   const hoje = new Date().toISOString().slice(0, 10);
   const contasComLembrete = new Set(obterContasComLembrete());
   if (contasComLembrete.size === 0) return [];
 
-  // Carrega histórico para não reenviar o mesmo alerta múltiplas vezes
-  let alertasEnviados: Record<string, string> = {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_HISTORICO_ALERTAS);
-    if (raw) alertasEnviados = JSON.parse(raw);
-  } catch {}
-
-  const parcelasAlvo = parcelas.filter(
+  return parcelas.filter(
     (p) =>
       p.status !== 'pago' &&
       p.data_vencimento <= hoje &&
       contasComLembrete.has(p.conta_id)
   );
+}
 
-  const disparadas: Parcela[] = [];
+/**
+ * Verifica o status atual da permissão de notificação (sem suporte a notificações de sistema)
+ */
+export function verificarPermissaoNotificacao(): 'unsupported' {
+  return 'unsupported';
+}
 
-  for (const p of parcelasAlvo) {
-    const chaveAlerta = `${p.id}_${p.data_vencimento}`;
-    if (!alertasEnviados[chaveAlerta]) {
-      const isHoje = p.data_vencimento === hoje;
-      const dataBr = p.data_vencimento.split('-').reverse().join('/');
-      const titulo = isHoje
-        ? `🔔 Vence Hoje: ${p.conta_descricao}`
-        : `⚠️ Conta Atrasada: ${p.conta_descricao}`;
-      const corpo = isHoje
-        ? `A conta no valor de ${formatarMoeda(p.valor)} vence hoje. Toque para conferir!`
-        : `A conta no valor de ${formatarMoeda(p.valor)} venceu em ${dataBr}. Não se esqueça de pagar!`;
+/**
+ * Solicitação de notificação (compatibilidade)
+ */
+export async function solicitarPermissaoNotificacao(): Promise<boolean> {
+  return false;
+}
 
-      const sucesso = await dispararNotificacaoLocal(titulo, corpo);
-      if (sucesso) {
-        alertasEnviados[chaveAlerta] = new Date().toISOString();
-        disparadas.push(p);
-        if (onNotificarBanco) {
-          try {
-            await onNotificarBanco(p.id, p.data_vencimento);
-          } catch (err) {
-            console.warn('Aviso ao registrar notificação no banco:', err);
-          }
-        }
-      }
-    }
-  }
+/**
+ * Emite uma notificação local (compatibilidade)
+ */
+export async function dispararNotificacaoLocal(_titulo: string, _corpo: string): Promise<boolean> {
+  return false;
+}
 
-  try {
-    localStorage.setItem(STORAGE_KEY_HISTORICO_ALERTAS, JSON.stringify(alertasEnviados));
-  } catch {}
+/**
+ * Teste de lembrete
+ */
+export async function testarNotificacaoLocal(): Promise<boolean> {
+  return false;
+}
 
-  return disparadas;
+/**
+ * Verifica parcelas pendentes com lembrete ativo para exibição no app
+ */
+export async function verificarAlertasVencimentoHoje(
+  parcelas: Parcela[],
+  _onNotificarBanco?: (parcelaId: number, dataVencimento: string) => Promise<void>
+): Promise<Parcela[]> {
+  return obterParcelasLembreteHoje(parcelas);
 }

@@ -9,7 +9,12 @@ interface TopAppBarProps {
 
 export const TopAppBar: React.FC<TopAppBarProps> = ({ darkMode, setDarkMode, onNovaConta }) => {
   return (
-    <header className="sticky top-0 z-30 bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 dark:from-slate-950 dark:via-blue-950 dark:to-slate-950 text-white px-4 py-3 flex items-center justify-between transition-colors shadow-md dark:border-b dark:border-slate-800">
+    <header
+      style={{
+        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+      }}
+      className="sticky top-0 z-30 bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 dark:from-slate-950 dark:via-blue-950 dark:to-slate-950 text-white px-4 pb-3 flex items-center justify-between transition-colors shadow-md dark:border-b dark:border-slate-800"
+    >
       <div className="flex items-center gap-2.5">
         <img
           src="/icon.svg"

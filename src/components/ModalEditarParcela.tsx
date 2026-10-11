@@ -5,8 +5,6 @@ import { EditarParcelaInput } from '../db/repository';
 import {
   temLembrete,
   definirLembrete,
-  verificarPermissaoNotificacao,
-  solicitarPermissaoNotificacao,
 } from '../utils/lembretes';
 
 interface ModalEditarParcelaProps {
@@ -103,7 +101,13 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
+      style={{
+        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+      }}
+    >
       <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 my-8">
         {/* Cabeçalho */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -255,15 +259,8 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
 
             <button
               type="button"
-              onClick={async () => {
-                const novo = !lembreteAtivo;
-                if (novo) {
-                  const perm = verificarPermissaoNotificacao();
-                  if (perm === 'default') {
-                    await solicitarPermissaoNotificacao();
-                  }
-                }
-                setLembreteAtivo(novo);
+              onClick={() => {
+                setLembreteAtivo((prev) => !prev);
               }}
               className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer flex items-center p-0.5 ${
                 lembreteAtivo ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-700'

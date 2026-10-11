@@ -304,6 +304,7 @@ export function executarMigracoes(db: Database) {
   }
 
   // Migração 2: Conversão de valores monetários float para centavos (INTEGER)
+  // Totalmente idempotente e controlada por schema_version
   if (versao < 2) {
     try {
       // Verifica se existem valores reais que precisem ser multiplicados por 100
@@ -319,11 +320,11 @@ export function executarMigracoes(db: Database) {
         SET valor_total = CAST(ROUND(valor_total * 100) AS INTEGER)
         WHERE typeof(valor_total) = 'real';
       `);
-    } catch (err) {
-      console.warn('Aviso durante migração de centavos:', err);
+      versao = 2;
+      definirVersaoSchema(db, 2);
+    } catch (err: any) {
+      throw new Error(`Falha na etapa de migração para centavos (versão 2): ${err?.message || err}`);
     }
-    versao = 2;
-    definirVersaoSchema(db, 2);
   }
 
   // Migração 3: Elimina status 'atrasado' gravado (status no banco é estritamente 'pendente' ou 'pago')

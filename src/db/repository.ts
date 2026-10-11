@@ -166,13 +166,18 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
         [contaId, valorTotalCentavos, input.data_primeiro_vencimento]
       );
     } else if (input.tipo === 'recorrente') {
-      // Recorrente: NUNCA pré-gera dezenas de parcelas futuras.
-      // Mantém sempre apenas a próxima ocorrência pendente.
-      db.run(
-        `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-         VALUES (?, 1, 1, ?, ?, NULL, 'pendente', NULL);`,
-        [contaId, valorTotalCentavos, input.data_primeiro_vencimento]
-      );
+      // Recorrente: gera os próximos 12 meses como previstos (sempre mantidos 12 meses à frente)
+      let dataVenc = input.data_primeiro_vencimento;
+      for (let i = 0; i < 12; i++) {
+        if (i > 0) {
+          dataVenc = calcularProximoVencimento(dataVenc, 'mensal', diaBase);
+        }
+        db.run(
+          `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+           VALUES (?, ?, 12, ?, ?, NULL, 'pendente', NULL);`,
+          [contaId, i + 1, valorTotalCentavos, dataVenc]
+        );
+      }
     } else if (input.tipo === 'parcelada') {
       // Parcelada: divide os centavos exatamente distribuindo o resto na 1ª parcela
       const totalParcelas = Math.max(1, input.numero_parcelas || 1);
@@ -325,34 +330,38 @@ export async function marcarParcelaComoPaga(
       [dtPag, valorPagoFinal, parcelaId]
     );
 
-    // Se for conta recorrente, garante a geração da PRÓXIMA parcela pendente
+    // Se for conta recorrente, reponha para sempre manter 12 meses à frente
     if (tipoConta === 'recorrente') {
       const resCheckPendente = db.exec(
-        `SELECT id FROM parcelas WHERE conta_id = ? AND status = 'pendente';`,
+        `SELECT COUNT(*) FROM parcelas WHERE conta_id = ? AND status = 'pendente';`,
         [contaId]
       );
-      // Se não há nenhuma pendente futura, gera a próxima
-      if (!resCheckPendente[0]?.values?.length) {
-        const proximoVenc = calcularProximoVencimento(dataVencAtual, freqRecorrencia, diaBaseOriginal);
-        const proximoNum = numParcela + 1;
-
-        db.run(
-          `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
-           VALUES (?, ?, ?, ?, ?, NULL, 'pendente', NULL);`,
-          [contaId, proximoNum, proximoNum, valorOriginal, proximoVenc]
+      const qtdPendentes = (resCheckPendente[0]?.values[0]?.[0] as number) || 0;
+      if (qtdPendentes < 12) {
+        const faltam = 12 - qtdPendentes;
+        const resUltima = db.exec(
+          `SELECT MAX(data_vencimento), MAX(numero_parcela) FROM parcelas WHERE conta_id = ?;`,
+          [contaId]
         );
-
-        // Atualiza o total de parcelas na conta recorrente
-        db.run('UPDATE parcelas SET total_parcelas = ? WHERE conta_id = ?;', [proximoNum, contaId]);
+        let ultVenc = (resUltima[0]?.values[0]?.[0] as string) || dataVencAtual;
+        let ultNum = (resUltima[0]?.values[0]?.[1] as number) || numParcela;
+        for (let k = 0; k < faltam; k++) {
+          ultVenc = calcularProximoVencimento(ultVenc, freqRecorrencia, diaBaseOriginal);
+          ultNum++;
+          db.run(
+            `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+             VALUES (?, ?, ?, ?, ?, NULL, 'pendente', NULL);`,
+            [contaId, ultNum, ultNum, valorOriginal, ultVenc]
+          );
+        }
+        db.run('UPDATE parcelas SET total_parcelas = ? WHERE conta_id = ?;', [ultNum, contaId]);
       }
     }
   });
 }
 
 /**
- * Desfaz o pagamento de uma parcela:
- * - Se for recorrente e houver uma próxima parcela pendente gerada automaticamente após esta,
- *   remove a pendente futura para manter a integridade da sequência.
+ * Desfaz o pagamento de uma parcela
  */
 export async function desfazerPagamentoParcela(parcelaId: number): Promise<void> {
   await executarEmTransacao((db) => {
@@ -378,13 +387,22 @@ export async function desfazerPagamentoParcela(parcelaId: number): Promise<void>
       [parcelaId]
     );
 
-    // Se recorrente, remove parcelas pendentes posteriores geradas automaticamente
+    // Se recorrente e houver mais de 12 pendentes, apara o excesso para manter 12 à frente
     if (tipo === 'recorrente') {
-      db.run(
-        `DELETE FROM parcelas 
-         WHERE conta_id = ? AND numero_parcela > ? AND status = 'pendente';`,
-        [contaId, numParcela]
+      const resPendentes = db.exec(
+        `SELECT COUNT(*) FROM parcelas WHERE conta_id = ? AND status = 'pendente';`,
+        [contaId]
       );
+      const qtd = (resPendentes[0]?.values[0]?.[0] as number) || 0;
+      if (qtd > 12) {
+        const excedente = qtd - 12;
+        db.run(
+          `DELETE FROM parcelas WHERE id IN (
+            SELECT id FROM parcelas WHERE conta_id = ? AND status = 'pendente' ORDER BY numero_parcela DESC LIMIT ?
+          );`,
+          [contaId, excedente]
+        );
+      }
     }
   });
 }
@@ -703,6 +721,8 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
   const db = await getDb();
   const hoje = getHojeIso();
 
+  // Seleciona toda conta com mais de 1 parcela na tabela parcelas (total_parcelas > 1 ou count > 1)
+  // com JOIN em contas e categorias, independentemente de contas.tipo
   const stmtContas = db.prepare(`
     SELECT 
       c.id AS conta_id,
@@ -712,10 +732,14 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       cat.cor AS categoria_cor,
       c.forma_pagamento,
       c.tipo,
-      c.valor_total
+      c.valor_total,
+      MAX(p.total_parcelas) AS max_total_parcelas,
+      COUNT(p.id) AS qtd_parcelas
     FROM contas c
+    INNER JOIN parcelas p ON p.conta_id = c.id
     INNER JOIN categorias cat ON c.categoria_id = cat.id
-    WHERE c.tipo = 'parcelada'
+    GROUP BY c.id
+    HAVING MAX(p.total_parcelas) > 1 OR COUNT(p.id) > 1
     ORDER BY c.id DESC;
   `);
 
@@ -727,14 +751,17 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
 
   if (contas.length === 0) return [];
 
+  const ids = contas.map((c) => c.conta_id);
+  const placeholders = ids.map(() => '?').join(',');
   const stmtTodasParcelas = db.prepare(`
     SELECT 
       p.id, p.conta_id, p.numero_parcela, p.total_parcelas, p.valor, p.data_vencimento, p.data_pagamento, p.status, p.valor_pago
     FROM parcelas p
     INNER JOIN contas c ON p.conta_id = c.id
-    WHERE c.tipo = 'parcelada'
+    WHERE p.conta_id IN (${placeholders})
     ORDER BY p.conta_id DESC, p.numero_parcela ASC;
   `);
+  stmtTodasParcelas.bind(ids);
 
   const parcelasPorConta = new Map<number, Parcela[]>();
   while (stmtTodasParcelas.step()) {
@@ -771,11 +798,12 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       }
     }
 
-    const totalParcelas = parcelas.length || 1;
-    const saldoRestante = Math.max(0, c.valor_total - valorPago);
+    const totalContratado = parcelas.reduce((acc, p) => acc + p.valor, 0);
+    const totalParcelas = parcelas.length || c.max_total_parcelas || 1;
+    const saldoRestante = Math.max(0, totalContratado - valorPago);
     let statusGeral: 'concluido' | 'em_andamento' | 'com_atraso' = 'em_andamento';
 
-    if (parcelasPagas === totalParcelas) {
+    if (saldoRestante <= 0 || parcelasPagas === totalParcelas) {
       statusGeral = 'concluido';
     } else if (temAtraso) {
       statusGeral = 'com_atraso';
@@ -789,7 +817,7 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       categoria_cor: c.categoria_cor,
       forma_pagamento: c.forma_pagamento,
       tipo: c.tipo,
-      valor_total: c.valor_total,
+      valor_total: totalContratado,
       total_parcelas: totalParcelas,
       parcelas_pagas: parcelasPagas,
       valor_pago: valorPago,
@@ -798,6 +826,145 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       status_geral: statusGeral,
       parcelas,
     };
+  });
+}
+
+export interface ResumoReparacaoParcelas {
+  contasVerificadas: number;
+  contasReparadas: number;
+  parcelasGeradas: number;
+  detalhes: Array<{
+    contaId: number;
+    descricao: string;
+    totalEsperado: number;
+    existentesAntes: number;
+    geradas: number;
+  }>;
+}
+
+/**
+ * Verifica e repara parcelas: para cada conta com menos linhas em parcelas do que total_parcelas,
+ * gera as que faltam, sem duplicar nem alterar as pagas, e retorna um resumo.
+ * Executa em transação atômica.
+ */
+export async function verificarERepararParcelas(): Promise<ResumoReparacaoParcelas> {
+  return await executarEmTransacao((db) => {
+    const stmtContas = db.prepare(`
+      SELECT 
+        c.id, c.descricao, c.valor_total, c.tipo, c.dia_base, c.data_criacao,
+        c.frequencia_recorrencia
+      FROM contas c
+      ORDER BY c.id ASC;
+    `);
+
+    const contas: any[] = [];
+    while (stmtContas.step()) {
+      contas.push(stmtContas.getAsObject());
+    }
+    stmtContas.free();
+
+    const resumo: ResumoReparacaoParcelas = {
+      contasVerificadas: contas.length,
+      contasReparadas: 0,
+      parcelasGeradas: 0,
+      detalhes: [],
+    };
+
+    for (const c of contas) {
+      const stmtParcs = db.prepare(`
+        SELECT id, numero_parcela, total_parcelas, valor, data_vencimento, status
+        FROM parcelas
+        WHERE conta_id = ?
+        ORDER BY numero_parcela ASC;
+      `);
+      stmtParcs.bind([c.id]);
+      const parcelasExistentes: any[] = [];
+      while (stmtParcs.step()) {
+        parcelasExistentes.push(stmtParcs.getAsObject());
+      }
+      stmtParcs.free();
+
+      const existingNumbers = new Set(parcelasExistentes.map((p) => p.numero_parcela));
+      const maxTotalParcelas = parcelasExistentes.reduce(
+        (max, p) => Math.max(max, p.total_parcelas || 1),
+        1
+      );
+
+      let totalEsperado = maxTotalParcelas;
+      if (c.tipo === 'recorrente') {
+        totalEsperado = Math.max(12, maxTotalParcelas);
+      }
+
+      const linhasFaltantes = totalEsperado - parcelasExistentes.length;
+      if (linhasFaltantes > 0) {
+        let geradasNestaConta = 0;
+        const diaBase =
+          c.dia_base ||
+          (parcelasExistentes[0] ? extrairPartesData(parcelasExistentes[0].data_vencimento).dia : 1);
+
+        const dataRef = parcelasExistentes[0]?.data_vencimento || c.data_criacao || getHojeIso();
+
+        if (c.tipo === 'parcelada') {
+          const parcelasCentavos = dividirEmParcelas(c.valor_total, totalEsperado);
+
+          for (let n = 1; n <= totalEsperado; n++) {
+            if (!existingNumbers.has(n)) {
+              let dataVencN = dataRef;
+              for (let k = 1; k < n; k++) {
+                dataVencN = calcularProximoVencimento(dataVencN, 'mensal', diaBase);
+              }
+              const val = parcelasCentavos[n - 1] || Math.floor(c.valor_total / totalEsperado);
+              db.run(
+                `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+                 VALUES (?, ?, ?, ?, ?, NULL, 'pendente', NULL);`,
+                [c.id, n, totalEsperado, val, dataVencN]
+              );
+              geradasNestaConta++;
+              existingNumbers.add(n);
+            }
+          }
+          db.run(`UPDATE parcelas SET total_parcelas = ? WHERE conta_id = ?;`, [totalEsperado, c.id]);
+        } else if (c.tipo === 'recorrente') {
+          for (let n = 1; n <= totalEsperado; n++) {
+            if (!existingNumbers.has(n)) {
+              let dataVencN = dataRef;
+              for (let k = 1; k < n; k++) {
+                dataVencN = calcularProximoVencimento(dataVencN, 'mensal', diaBase);
+              }
+              db.run(
+                `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+                 VALUES (?, ?, ?, ?, ?, NULL, 'pendente', NULL);`,
+                [c.id, n, totalEsperado, c.valor_total, dataVencN]
+              );
+              geradasNestaConta++;
+              existingNumbers.add(n);
+            }
+          }
+          db.run(`UPDATE parcelas SET total_parcelas = ? WHERE conta_id = ?;`, [totalEsperado, c.id]);
+        } else if (c.tipo === 'unica' && parcelasExistentes.length === 0) {
+          db.run(
+            `INSERT INTO parcelas (conta_id, numero_parcela, total_parcelas, valor, data_vencimento, data_pagamento, status, valor_pago)
+             VALUES (?, 1, 1, ?, ?, NULL, 'pendente', NULL);`,
+            [c.id, c.valor_total, c.data_criacao || getHojeIso()]
+          );
+          geradasNestaConta++;
+        }
+
+        if (geradasNestaConta > 0) {
+          resumo.contasReparadas++;
+          resumo.parcelasGeradas += geradasNestaConta;
+          resumo.detalhes.push({
+            contaId: c.id,
+            descricao: c.descricao,
+            totalEsperado,
+            existentesAntes: parcelasExistentes.length,
+            geradas: geradasNestaConta,
+          });
+        }
+      }
+    }
+
+    return resumo;
   });
 }
 

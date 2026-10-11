@@ -21,6 +21,7 @@ import { SnackbarDesfazer } from './components/SnackbarDesfazer';
 import { ModalDetalhesConta } from './components/ModalDetalhesConta';
 import { ModalConfirmacao } from './components/ModalConfirmacao';
 import { SplashScreen } from './components/SplashScreen';
+import { ModalLembretesHoje } from './components/ModalLembretesHoje';
 
 import {
   Categoria,
@@ -50,9 +51,10 @@ import {
   EditarParcelaInput,
   DadosRestauracaoExclusao,
   registrarNotificacaoEnviadaNoBanco,
+  verificarERepararParcelas,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
-import { verificarAlertasVencimentoHoje } from './utils/lembretes';
+import { obterParcelasLembreteHoje } from './utils/lembretes';
 
 export default function App() {
   // Modo Escuro (segue o sistema por padrão, com opção manual)
@@ -103,6 +105,9 @@ export default function App() {
   const [snackbarDesfazerAberto, setSnackbarDesfazerAberto] = useState(false);
   const [detalhesContaParcelas, setDetalhesContaParcelas] = useState<Parcela[] | null>(null);
   const [exclusaoPendente, setExclusaoPendente] = useState<{ contaId: number; descricao: string } | null>(null);
+  const [modalLembretesHojeAberto, setModalLembretesHojeAberto] = useState(false);
+  const [parcelasLembreteHoje, setParcelasLembreteHoje] = useState<Parcela[]>([]);
+  const lembretesAberturaExibidosRef = React.useRef(false);
 
   const carregarParcelamentos = useCallback(async () => {
     try {
@@ -131,10 +136,6 @@ export default function App() {
       if (parts) {
         setParcelamentos(parts);
       }
-      // Verifica e emite notificações locais para contas com lembrete que vencem hoje ou estão atrasadas
-      listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
-        verificarAlertasVencimentoHoje(todasPendentes, registrarNotificacaoEnviadaNoBanco);
-      });
     } catch (error) {
       console.error('Erro ao consultar banco SQLite:', error);
     } finally {
@@ -146,20 +147,33 @@ export default function App() {
     carregarDados();
   }, [carregarDados]);
 
-  // Listener para verificar lembretes quando o usuário volta para o app (visibilitychange)
+  // Executa verificação e reparação de parcelas e exibe lembretes internos na abertura
   useEffect(() => {
-    const handleVisibilidade = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
-          verificarAlertasVencimentoHoje(todasPendentes, registrarNotificacaoEnviadaNoBanco);
-        });
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilidade);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilidade);
-    };
-  }, []);
+    if (!splashConcluida) return;
+
+    // Item 4: Execute também uma vez na inicialização, em transação
+    verificarERepararParcelas()
+      .then((resumo) => {
+        if (resumo.parcelasGeradas > 0) {
+          carregarDados(true);
+        }
+      })
+      .catch((err) => {
+        console.warn('Aviso ao verificar parcelas na inicialização:', err);
+      });
+
+    // Item 5: Lembrete exibido dentro do app na abertura (contas que vencem hoje ou atrasadas)
+    if (!lembretesAberturaExibidosRef.current) {
+      lembretesAberturaExibidosRef.current = true;
+      listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
+        const lembretes = obterParcelasLembreteHoje(todasPendentes);
+        if (lembretes.length > 0) {
+          setParcelasLembreteHoje(lembretes);
+          setModalLembretesHojeAberto(true);
+        }
+      });
+    }
+  }, [splashConcluida, carregarDados]);
 
   useEffect(() => {
     if (abaAtiva === 'parcelas') {
@@ -174,6 +188,14 @@ export default function App() {
     await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
     dispararConfetes();
     await carregarDados();
+  };
+
+  const handlePagarParcelaLembrete = async (parcela: Parcela) => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
+    dispararConfetes();
+    await carregarDados();
+    setParcelasLembreteHoje((prev) => prev.filter((p) => p.id !== parcela.id));
   };
 
   const handleConfirmarModalPagamento = async (parcelaId: number, dataPagamento: string, valorPago: number) => {

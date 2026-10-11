@@ -6,8 +6,6 @@ import { BarraProgressoVencimento } from './BarraProgressoVencimento';
 import {
   temLembrete,
   alternarLembrete,
-  verificarPermissaoNotificacao,
-  solicitarPermissaoNotificacao,
 } from '../utils/lembretes';
 
 interface ModalDetalhesContaProps {
@@ -34,11 +32,7 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
     setLembreteAtivo(temLembrete(primeira.conta_id));
   }, [primeira.conta_id]);
 
-  const handleToggleLembrete = async () => {
-    const perm = verificarPermissaoNotificacao();
-    if (perm === 'default') {
-      await solicitarPermissaoNotificacao();
-    }
+  const handleToggleLembrete = () => {
     const novo = alternarLembrete(primeira.conta_id);
     setLembreteAtivo(novo);
   };
@@ -52,7 +46,13 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   const pct = (parcelasPagas / parcelas.length) * 100;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
+      style={{
+        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+      }}
+    >
       <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 my-8 max-h-[90vh] flex flex-col">
         {/* Topo */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0">

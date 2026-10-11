@@ -406,26 +406,12 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
     };
   }, []);
 
-  const handleToggleLembrete = async (contaId: number, descricao: string) => {
-    const perm = verificarPermissaoNotificacao();
-    if (perm === 'default') {
-      const concedida = await solicitarPermissaoNotificacao();
-      if (!concedida) {
-        setToastLembrete('Permissão de notificações não concedida no navegador.');
-        setTimeout(() => setToastLembrete(null), 3500);
-        return;
-      }
-    } else if (perm === 'denied') {
-      setToastLembrete('Notificações bloqueadas nas permissões do navegador.');
-      setTimeout(() => setToastLembrete(null), 3500);
-      return;
-    }
-
+  const handleToggleLembrete = (contaId: number, descricao: string) => {
     const ativo = alternarLembrete(contaId);
     setContasComLembrete(new Set(obterContasComLembrete()));
     setToastLembrete(
       ativo
-        ? `🔔 Lembrete ativado para "${descricao}"!`
+        ? `🔔 Lembrete interno ativado para "${descricao}" (será exibido ao abrir o app)`
         : `🔕 Lembrete desativado para "${descricao}".`
     );
     setTimeout(() => setToastLembrete(null), 3000);

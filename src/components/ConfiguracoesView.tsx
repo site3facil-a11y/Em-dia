@@ -14,6 +14,8 @@ import {
   HelpCircle,
   ChevronDown,
   ChevronUp,
+  Wrench,
+  X,
 } from 'lucide-react';
 import {
   exportarArquivoSqlite,
@@ -22,15 +24,14 @@ import {
   solicitarPersistenciaStorage,
   verificarPersistenciaStorage,
 } from '../db/sqlite';
-import { gerarCsvParcelas } from '../db/repository';
+import {
+  gerarCsvParcelas,
+  verificarERepararParcelas,
+  ResumoReparacaoParcelas,
+} from '../db/repository';
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
 import { compararVersoes } from '../utils/versao';
-import {
-  obterContasComLembrete,
-  testarNotificacaoLocal,
-  verificarPermissaoNotificacao,
-  solicitarPermissaoNotificacao,
-} from '../utils/lembretes';
+import { obterContasComLembrete } from '../utils/lembretes';
 
 interface ConfiguracoesViewProps {
   darkMode?: boolean;
@@ -40,11 +41,13 @@ interface ConfiguracoesViewProps {
   totalParcelas?: number;
   totalCategorias?: number;
   onCriarPorquinho?: () => void;
+  onAbrirLembretesHoje?: () => void;
 }
 
 export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   onDadosModificados,
   onCriarPorquinho,
+  onAbrirLembretesHoje,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -53,13 +56,11 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
   const [modalAtualizacaoAberto, setModalAtualizacaoAberto] = useState(false);
   const [releaseEncontrada, setReleaseEncontrada] = useState<ReleaseInfo | null>(null);
-  const [testandoNotificacao, setTestandoNotificacao] = useState(false);
-  const [permNotificacao, setPermNotificacao] = useState<NotificationPermission | 'unsupported'>(() =>
-    verificarPermissaoNotificacao()
-  );
+  const [reparandoParcelas, setReparandoParcelas] = useState(false);
+  const [resumoReparacao, setResumoReparacao] = useState<ResumoReparacaoParcelas | null>(null);
+  const [modalResumoReparacaoAberto, setModalResumoReparacaoAberto] = useState(false);
   const [qtdLembretes, setQtdLembretes] = useState(() => obterContasComLembrete().length);
   const [persistenciaAtiva, setPersistenciaAtiva] = useState<boolean | null>(null);
-  const [ajudaNotificacaoAberta, setAjudaNotificacaoAberta] = useState(false);
   const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
   const [bufferRestauracao, setBufferRestauracao] = useState<ArrayBuffer | null>(null);
   const [nomeArquivoRestauracao, setNomeArquivoRestauracao] = useState<string>('');
@@ -100,7 +101,6 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   useEffect(() => {
     const sync = () => {
       setQtdLembretes(obterContasComLembrete().length);
-      setPermNotificacao(verificarPermissaoNotificacao());
     };
     window.addEventListener('em-dia-lembretes-alterados', sync);
     window.addEventListener('storage', sync);
@@ -115,43 +115,34 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     setTimeout(() => setMensagemSucesso(null), 4000);
   };
 
-  const handleTestarNotificacao = async () => {
+  // Verificar e Reparar Parcelas Faltantes (Item 4)
+  const handleVerificarEReparar = async () => {
     try {
-      setTestandoNotificacao(true);
-      const perm = verificarPermissaoNotificacao();
-      if (perm === 'unsupported') {
-        setErro('Notificações locais não são suportadas neste navegador.');
-        return;
-      }
-      if (perm !== 'granted') {
-        const permitiu = await solicitarPermissaoNotificacao();
-        setPermNotificacao(verificarPermissaoNotificacao());
-        if (!permitiu) {
-          setErro('Permissão de notificação não foi concedida.');
-          return;
-        }
-      }
-      const disparou = await testarNotificacaoLocal();
-      setPermNotificacao(verificarPermissaoNotificacao());
-      if (disparou) {
-        notificarSucesso('Notificação de teste enviada com sucesso no seu dispositivo!');
+      setReparandoParcelas(true);
+      setErro(null);
+      const resumo = await verificarERepararParcelas();
+      setResumoReparacao(resumo);
+      setModalResumoReparacaoAberto(true);
+      await onDadosModificados();
+      if (resumo.parcelasGeradas > 0) {
+        notificarSucesso(`Reparação concluída: ${resumo.parcelasGeradas} parcelas faltantes geradas com sucesso!`);
       } else {
-        setErro('Não foi possível emitir a notificação. Verifique se o navegador está bloqueando alertas.');
+        notificarSucesso('Todas as contas e parcelas estão corretas e completas.');
       }
     } catch (err: any) {
-      setErro('Erro ao testar notificação: ' + err.message);
+      setErro('Erro ao verificar e reparar parcelas: ' + (err?.message || err));
     } finally {
-      setTestandoNotificacao(false);
+      setReparandoParcelas(false);
     }
   };
 
-  // Verificar Atualização no GitHub
+  // Verificar Atualização no GitHub com Mensagens Separadas (Item 7)
   const handleVerificarAtualizacao = async () => {
     setErro(null);
     setMensagemSucesso(null);
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setErro('Sem conexão com a internet. Verifique sua rede e tente novamente.');
+      setErro('Sem conexão com a internet');
       return;
     }
 
@@ -163,24 +154,29 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         },
       });
 
-      if (res.status === 403 || res.status === 429) {
-        setErro('Limite de consultas da API do GitHub excedido. Tente novamente mais tarde.');
+      if (res.status === 404) {
+        setErro('Ainda não há nenhuma versão publicada no GitHub');
         return;
       }
 
-      if (res.status === 404) {
-        setErro('Nenhuma versão encontrada ou repositório inacessível (Erro 404). Se o repositório for privado, mude a visibilidade para Público no GitHub para permitir atualizações.');
+      if (res.status === 403 || res.status === 429) {
+        setErro('Limite de consultas do GitHub atingido');
         return;
       }
 
       if (!res.ok) {
-        setErro(`Não foi possível verificar atualizações no momento. (Erro HTTP ${res.status})`);
+        setErro(`Erro ao consultar GitHub (HTTP ${res.status})`);
         return;
       }
 
       const releaseData: ReleaseInfo = await res.json();
-      const tag = releaseData.tag_name || '';
+      const temDistZip = releaseData.assets?.some((a: any) => a.name === 'dist.zip');
+      if (!temDistZip) {
+        setErro('A versão publicada não tem o arquivo dist.zip');
+        return;
+      }
 
+      const tag = releaseData.tag_name || '';
       const comparacao = compararVersoes(tag, __APP_VERSION__);
       if (comparacao > 0) {
         setReleaseEncontrada(releaseData);
@@ -190,7 +186,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       }
     } catch (err: any) {
       console.error('Erro ao verificar atualização no GitHub:', err);
-      setErro('Não foi possível verificar atualizações. Verifique sua conexão com a internet.');
+      setErro('Sem conexão com a internet');
     } finally {
       setVerificandoAtualizacao(false);
     }
@@ -381,83 +377,76 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         </div>
       </div>
 
-      {/* Lembretes e Notificações no Dispositivo */}
+      {/* Lembretes no Aplicativo (Sininho 🔔) */}
       <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
-              <Bell className="w-5 h-5" />
+              <Bell className="w-5 h-5 fill-white" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  Lembretes de Vencimento
+                  Lembretes de Vencimento (Sininho 🔔)
                 </h4>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                  {qtdLembretes} {qtdLembretes === 1 ? 'conta escolhida' : 'contas escolhidas'}
+                  {qtdLembretes} {qtdLembretes === 1 ? 'conta marcada' : 'contas marcadas'}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Apenas as contas que você marcar com o sininho (🔔) recebem aviso no dia do vencimento.
+                Exibido automaticamente dentro do app na abertura para contas que vencem hoje ou estão atrasadas.
+              </p>
+            </div>
+          </div>
+
+          {onAbrirLembretesHoje && (
+            <button
+              onClick={onAbrirLembretesHoje}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+              title="Visualizar lembretes do dia"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              <span>Ver Lembretes do Dia</span>
+            </button>
+          )}
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+          <p className="font-bold">
+            ℹ️ Lembrete interno do aplicativo
+          </p>
+          <p className="text-[11px] leading-relaxed text-amber-800/90 dark:text-amber-300">
+            Este lembrete é exibido <strong>dentro do próprio aplicativo na abertura</strong> quando existirem contas que vencem na data ou estão em atraso. <strong>Não é uma notificação do sistema operacional</strong> nem requer permissões do dispositivo.
+          </p>
+        </div>
+      </div>
+
+      {/* Integridade & Reparação de Parcelas (Item 4) */}
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-200 dark:border-indigo-800">
+              <Wrench className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                Verificar e Reparar Parcelas
+              </h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Para cada conta com menos parcelas do que total_parcelas, gera as que faltam, sem duplicar nem alterar as pagas.
               </p>
             </div>
           </div>
 
           <button
-            onClick={handleTestarNotificacao}
-            disabled={testandoNotificacao}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
-            title="Enviar uma notificação de teste para verificar se o aparelho recebe alertas"
+            onClick={handleVerificarEReparar}
+            disabled={reparandoParcelas}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs shadow-md shadow-indigo-600/20 transition-all cursor-pointer disabled:opacity-50"
           >
-            <Bell className={`w-3.5 h-3.5 ${testandoNotificacao ? 'animate-bounce' : ''}`} />
-            <span>{testandoNotificacao ? 'Testando...' : 'Testar no aparelho'}</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${reparandoParcelas ? 'animate-spin' : ''}`} />
+            <span>{reparandoParcelas ? 'Verificando...' : 'Verificar e reparar parcelas'}</span>
           </button>
         </div>
-
-        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-          <span className="text-slate-600 dark:text-slate-400">Status das Notificações do Navegador:</span>
-          <div className="flex items-center gap-2">
-            <span
-              className={`font-bold px-2 py-0.5 rounded-full text-[11px] ${
-                permNotificacao === 'granted'
-                  ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300'
-                  : permNotificacao === 'denied'
-                  ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
-                  : 'bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300'
-              }`}
-            >
-              {permNotificacao === 'granted'
-                ? '✓ Permitido'
-                : permNotificacao === 'denied'
-                ? '✕ Bloqueado'
-                : 'Não solicitado'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setAjudaNotificacaoAberta(!ajudaNotificacaoAberta)}
-              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-              title="Informações sobre lembretes no navegador e aparelho"
-            >
-              <HelpCircle className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Painel Explicativo Transparente sobre Notificações */}
-        {ajudaNotificacaoAberta && (
-          <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-slate-700 dark:text-slate-300 space-y-2 animate-in fade-in">
-            <h5 className="font-bold text-blue-950 dark:text-blue-100 flex items-center gap-1.5">
-              <Info className="w-4 h-4 text-blue-600" />
-              <span>Como funcionam os lembretes no seu aparelho</span>
-            </h5>
-            <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
-              <li><strong>Zero Spam:</strong> O app só notifica as contas individuais onde você tocou no ícone do sininho (🔔).</li>
-              <li><strong>No iPhone (iOS):</strong> Para receber lembretes com a tela bloqueada ou fora do Safari, toque em <em>Compartilhar</em> e selecione <em>"Adicionar à Tela de Início"</em> (PWA).</li>
-              <li><strong>No Android & Computador:</strong> Notificações usam o Service Worker nativo. Se estiver bloqueado, clique no ícone de cadeado na barra de endereços do navegador e permita as Notificações.</li>
-              <li><strong>Ao Abrir o App:</strong> O Em Dia sempre confere automaticamente vencimentos de hoje ou atrasados assim que você acessa o sistema.</li>
-            </ul>
-          </div>
-        )}
       </div>
 
       {/* Persistência de Armazenamento Local (Storage Persistence) */}
@@ -566,7 +555,13 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
       {/* Modal de Confirmação Segura de Restauração SQLite */}
       {modalRestaurarAberto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
+          style={{
+            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+          }}
+        >
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6">
             <div className="flex items-start gap-3.5">
               <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
@@ -617,6 +612,95 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Resumo da Verificação e Reparação de Parcelas (Item 4) */}
+      {modalResumoReparacaoAberto && resumoReparacao && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
+          style={{
+            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+          }}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Resultado da Reparação
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Verificação de integridade das parcelas
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setModalResumoReparacaoAberto(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 block font-bold">Verificadas</span>
+                <span className="text-base font-mono font-extrabold text-slate-900 dark:text-white">
+                  {resumoReparacao.contasVerificadas}
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900">
+                <span className="text-[10px] text-indigo-500 dark:text-indigo-300 block font-bold">Reparadas</span>
+                <span className="text-base font-mono font-extrabold text-indigo-600 dark:text-indigo-400">
+                  {resumoReparacao.contasReparadas}
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-100 dark:border-emerald-900">
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-300 block font-bold">Geradas</span>
+                <span className="text-base font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
+                  {resumoReparacao.parcelasGeradas}
+                </span>
+              </div>
+            </div>
+
+            {resumoReparacao.detalhes.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                  Contas que receberam parcelas faltantes:
+                </span>
+                {resumoReparacao.detalhes.map((d) => (
+                  <div
+                    key={d.contaId}
+                    className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 text-xs flex justify-between items-center"
+                  >
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 truncate pr-2">
+                      {d.descricao}
+                    </span>
+                    <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold whitespace-nowrap">
+                      +{d.geradas} parcelas ({d.totalEsperado}x)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-3 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/40 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <span>Nenhuma inconsistência encontrada. Todas as contas possuem o número correto de parcelas!</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setModalResumoReparacaoAberto(false)}
+              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Concluir
+            </button>
           </div>
         </div>
       )}

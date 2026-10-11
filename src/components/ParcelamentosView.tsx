@@ -38,8 +38,8 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
   };
 
   const itensFiltrados = itens.filter((i) => {
-    if (filtroStatus === 'em_andamento') return i.status_geral !== 'concluido';
-    if (filtroStatus === 'concluido') return i.status_geral === 'concluido';
+    if (filtroStatus === 'em_andamento') return i.saldo_restante > 0;
+    if (filtroStatus === 'concluido') return i.saldo_restante <= 0;
     return true;
   });
 
@@ -104,7 +104,7 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
                 : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            Em Aberto ({itens.filter((i) => i.status_geral !== 'concluido').length})
+            Em Aberto ({itens.filter((i) => i.saldo_restante > 0).length})
           </button>
           <button
             onClick={() => setFiltroStatus('concluido')}
@@ -114,7 +114,7 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
                 : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            Quitadas ({itens.filter((i) => i.status_geral === 'concluido').length})
+            Quitadas ({itens.filter((i) => i.saldo_restante <= 0).length})
           </button>
         </div>
 
@@ -144,7 +144,7 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
             const isEconomia = item.categoria_nome?.toLowerCase().includes('poupança') || item.categoria_nome?.toLowerCase().includes('economia');
             const pct = item.total_parcelas > 0 ? (item.parcelas_pagas / item.total_parcelas) * 100 : 0;
             const valorParcelaMedia = item.total_parcelas > 0 ? item.valor_total / item.total_parcelas : 0;
-            const isQuitado = item.status_geral === 'concluido' || (isEconomia ? item.parcelas_pagas >= item.total_parcelas : item.saldo_restante <= 0);
+            const isQuitado = item.saldo_restante <= 0;
 
             return (
               <div
