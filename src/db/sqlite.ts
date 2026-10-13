@@ -6,7 +6,12 @@
 import initSqlJs, { Database } from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { getHojeIso } from '../utils/dates';
-import { exportarOuCompartilharArquivo } from '../utils/fileExport';
+import {
+  exportarOuCompartilharArquivo,
+  salvarArquivoNoDispositivo,
+  salvarNoGoogleDrive,
+  enviarPorEmail,
+} from '../utils/fileExport';
 
 export const DB_NAME = 'contas_a_pagar_db';
 export const IDB_STORE = 'sqlite_store';
@@ -693,12 +698,18 @@ export async function verificarPersistenciaStorage(): Promise<boolean> {
   return false;
 }
 
+export type DestinoBackupSqlite = 'documentos' | 'drive' | 'email';
+
 /**
  * Exporta o arquivo binário .sqlite real nomeado com a data local: em-dia-YYYY-MM-DD.sqlite.
- * No ambiente nativo do Android/iOS (Capacitor), grava em Directory.Cache e abre a folha de compartilhamento.
- * No ambiente web tradicional, executa o download do arquivo via Blob e tag <a>.
+ * Suporta três destinos principais:
+ * - 'documentos': salva diretamente no armazenamento/pasta Documentos do aparelho
+ * - 'drive': envia o arquivo para a conta do Google Drive
+ * - 'email': abre o app de e-mail (Gmail/Outlook) com o arquivo anexado
  */
-export async function exportarArquivoSqlite(): Promise<string> {
+export async function exportarArquivoSqlite(
+  destino: DestinoBackupSqlite = 'documentos'
+): Promise<string> {
   await persistirDbImediato();
   const db = await getDb();
   const binaryArray = db.export();
@@ -706,13 +717,29 @@ export async function exportarArquivoSqlite(): Promise<string> {
   const hoje = getHojeIso();
   const fileName = `em-dia-${hoje}.sqlite`;
 
-  await exportarOuCompartilharArquivo({
-    fileName,
-    data: binaryArray,
-    mimeType: 'application/x-sqlite3',
-    dialogTitle: 'Salvar backup',
-    title: fileName,
-  });
+  if (destino === 'drive') {
+    await salvarNoGoogleDrive({
+      fileName,
+      data: binaryArray,
+      mimeType: 'application/x-sqlite3',
+      title: fileName,
+    });
+  } else if (destino === 'email') {
+    await enviarPorEmail({
+      fileName,
+      data: binaryArray,
+      mimeType: 'application/x-sqlite3',
+      assunto: `Backup Em Dia - ${hoje}`,
+      corpo: `Segue em anexo o arquivo de backup do banco de dados do aplicativo Em Dia (${fileName}).`,
+    });
+  } else {
+    // Padrão: salvar no armazenamento / pasta Documentos
+    await salvarArquivoNoDispositivo({
+      fileName,
+      data: binaryArray,
+      mimeType: 'application/x-sqlite3',
+    });
+  }
 
   // Registra a data do último backup para lembretes de 30 dias
   try {

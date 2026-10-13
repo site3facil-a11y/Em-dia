@@ -18,9 +18,13 @@ import {
   X,
   Globe,
   Sparkles,
+  FolderDown,
+  Cloud,
+  Mail,
 } from 'lucide-react';
 import {
   exportarArquivoSqlite,
+  DestinoBackupSqlite,
   restaurarArquivoSqlite,
   validarCabecalhoSqlite,
   solicitarPersistenciaStorage,
@@ -65,6 +69,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [qtdLembretes, setQtdLembretes] = useState(() => obterContasComLembrete().length);
   const [persistenciaAtiva, setPersistenciaAtiva] = useState<boolean | null>(null);
   const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
+  const [modalDestinoBackupAberto, setModalDestinoBackupAberto] = useState(false);
   const [bufferRestauracao, setBufferRestauracao] = useState<ArrayBuffer | null>(null);
   const [nomeArquivoRestauracao, setNomeArquivoRestauracao] = useState<string>('');
 
@@ -253,13 +258,20 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     }
   };
 
-  // Backup do Arquivo .sqlite
-  const handleBackupSqlite = async () => {
+  // Executar Backup do Arquivo .sqlite conforme o destino escolhido
+  const handleExecutarBackupSqlite = async (destino: DestinoBackupSqlite) => {
     try {
       setProcessando(true);
       setErro(null);
-      const fileName = await exportarArquivoSqlite();
-      notificarSucesso(`Backup "${fileName}" concluído com sucesso!`);
+      setModalDestinoBackupAberto(false);
+      const fileName = await exportarArquivoSqlite(destino);
+      if (destino === 'documentos') {
+        notificarSucesso(`Backup "${fileName}" salvo com sucesso na pasta Documentos!`);
+      } else if (destino === 'drive') {
+        notificarSucesso(`Backup "${fileName}" enviado para o Google Drive!`);
+      } else if (destino === 'email') {
+        notificarSucesso(`Backup "${fileName}" preparado e enviado para seu app de e-mail!`);
+      }
     } catch (err: any) {
       setErro('Falha ao exportar banco de dados SQLite: ' + (err?.message || 'Erro desconhecido.'));
     } finally {
@@ -585,7 +597,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
           {/* Baixar .sqlite */}
           <button
-            onClick={handleBackupSqlite}
+            onClick={() => setModalDestinoBackupAberto(true)}
             disabled={processando}
             className="flex items-center justify-center gap-2 p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 font-semibold text-xs transition-colors cursor-pointer"
           >
@@ -782,6 +794,107 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
               className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Concluir
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Escolha de Destino de Backup SQLite */}
+      {modalDestinoBackupAberto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
+          style={{
+            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+          }}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    Salvar Backup SQLite
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Onde você deseja salvar seu arquivo de backup?
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setModalDestinoBackupAberto(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {/* Opção 1: Salvar no Celular (Pasta Documentos) */}
+              <button
+                onClick={() => handleExecutarBackupSqlite('documentos')}
+                disabled={processando}
+                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+                  <FolderDown className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                    Salvar no Celular (Pasta Documentos)
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                    Grava o arquivo diretamente no armazenamento do seu aparelho
+                  </p>
+                </div>
+              </button>
+
+              {/* Opção 2: Salvar no Google Drive */}
+              <button
+                onClick={() => handleExecutarBackupSqlite('drive')}
+                disabled={processando}
+                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500 dark:hover:border-emerald-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                    Salvar no Google Drive
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                    Envia o arquivo diretamente para sua conta do Google Drive
+                  </p>
+                </div>
+              </button>
+
+              {/* Opção 3: Enviar por E-mail */}
+              <button
+                onClick={() => handleExecutarBackupSqlite('email')}
+                disabled={processando}
+                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                    Enviar para o E-mail
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                    Abre seu aplicativo de e-mail (Gmail/Outlook) com o backup anexado
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setModalDestinoBackupAberto(false)}
+              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+            >
+              Cancelar
             </button>
           </div>
         </div>
