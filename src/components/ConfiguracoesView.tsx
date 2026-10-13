@@ -394,7 +394,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Segunda atualização pelo GitHub Pages funcionando
+                Desenvolvido por 3facil.com
               </p>
             </div>
           </div>
