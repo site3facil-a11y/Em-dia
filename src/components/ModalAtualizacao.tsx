@@ -18,6 +18,7 @@ import { salvarCopiaSegurancaSilenciosa } from '../utils/copiaAutomatica';
 export interface ReleaseInfo {
   version: string;
   url: string;
+  checksum?: string;
   size?: number;
   notes?: string;
   nomeArquivo?: string;
@@ -261,10 +262,37 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             console.warn('Listener downloadComplete não disponível:', completeListenerErr);
           }
 
-          // 3. Executa download usando a URL e a versão
+          // Obter ou calcular checksum SHA-256 (obrigatório pelo plugin @capgo/capacitor-updater v8)
+          let checksumResolvido = release?.checksum?.trim();
+          if (!checksumResolvido) {
+            try {
+              // 1. Tentar buscar arquivo .sha256 no GitHub Pages
+              const resSha = await fetch(`${urlParaTentativa}.sha256`);
+              if (resSha.ok) {
+                const txt = await resSha.text();
+                const hash = txt.trim().split(/\s+/)[0];
+                if (hash && hash.length === 64) checksumResolvido = hash;
+              }
+            } catch {}
+          }
+          if (!checksumResolvido && urlParaTentativa.includes('github.io')) {
+            try {
+              // 2. Tentar calcular via fetch e crypto.subtle (GitHub Pages suporta CORS)
+              const resZip = await fetch(urlParaTentativa);
+              if (resZip.ok) {
+                const buf = await resZip.arrayBuffer();
+                const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+                const hashArray = Array.from(new Uint8Array(hashBuf));
+                checksumResolvido = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+              }
+            } catch {}
+          }
+
+          // 3. Executa download usando a URL, a versão e o checksum SHA-256
           const bundleDoDownload = await CapacitorUpdater.download({
             url: urlParaTentativa,
             version: novaVersao,
+            ...(checksumResolvido ? { checksum: checksumResolvido } : {}),
           });
 
           // Só chame set() depois do evento downloadComplete

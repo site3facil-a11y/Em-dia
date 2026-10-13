@@ -34,7 +34,7 @@ jobs:
           mkdir site
           cp dist.zip site/dist.zip
           cp dist.zip "site/dist-${{ steps.v.outputs.version }}.zip"
-          node -e "const fs=require('fs');const v=process.argv[1];const s=fs.statSync('dist.zip').size;fs.writeFileSync('site/version.json',JSON.stringify({version:v,url:'https://site3facil-a11y.github.io/Em-dia/dist-'+v+'.zip',size:s,notes:'Atualização '+v}))" "${{ steps.v.outputs.version }}"
+          node -e "const fs=require('fs');const crypto=require('crypto');const v=process.argv[1];const buf=fs.readFileSync('dist.zip');const s=buf.length;const c=crypto.createHash('sha256').update(buf).digest('hex');fs.writeFileSync('site/version.json',JSON.stringify({version:v,url:'https://site3facil-a11y.github.io/Em-dia/dist-'+v+'.zip',checksum:c,size:s,notes:'Atualização '+v},null,2));fs.writeFileSync('site/dist-'+v+'.zip.sha256',c);" "${{ steps.v.outputs.version }}"
           touch site/.nojekyll
       - name: Criar release se for nova
         env:

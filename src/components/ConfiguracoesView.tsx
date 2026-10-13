@@ -163,6 +163,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
             dadosAtualizacao = {
               version: String(jsonPages.version),
               url: String(jsonPages.url),
+              checksum: jsonPages.checksum ? String(jsonPages.checksum) : undefined,
               size: typeof jsonPages.size === 'number' ? jsonPages.size : undefined,
               notes: jsonPages.notes ? String(jsonPages.notes) : undefined,
               nomeArquivo: jsonPages.url.split('/').pop()?.split('?')[0] || 'dist.zip',
