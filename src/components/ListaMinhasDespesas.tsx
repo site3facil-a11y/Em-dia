@@ -18,6 +18,7 @@ import {
   alternarLembrete,
   solicitarPermissaoNotificacao,
   verificarPermissaoNotificacao,
+  reagendarNotificacoes,
 } from '../utils/lembretes';
 
 interface ListaMinhasDespesasProps {
@@ -409,9 +410,10 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
   const handleToggleLembrete = (contaId: number, descricao: string) => {
     const ativo = alternarLembrete(contaId);
     setContasComLembrete(new Set(obterContasComLembrete()));
+    reagendarNotificacoes().catch(() => {});
     setToastLembrete(
       ativo
-        ? `🔔 Lembrete interno ativado para "${descricao}" (será exibido ao abrir o app)`
+        ? `🔔 Lembrete de vencimento ativado para "${descricao}"`
         : `🔕 Lembrete desativado para "${descricao}".`
     );
     setTimeout(() => setToastLembrete(null), 3000);

@@ -50,7 +50,7 @@ export const ModalLembretesHoje: React.FC<ModalLembretesHojeProps> = ({
               Lembretes do Em Dia
             </h3>
             <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-              Lembrete exibido dentro do aplicativo (não é uma notificação do sistema).
+              Resumo complementar de contas vencendo hoje ou atrasadas.
             </p>
           </div>
         </div>

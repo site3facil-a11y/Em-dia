@@ -13,6 +13,9 @@
       "launchAutoHide": false,
       "backgroundColor": "#1E1B4B",
       "showSpinner": false
+    },
+    "LocalNotifications": {
+      "iconColor": "#1E3A8A"
     }
   }
 }

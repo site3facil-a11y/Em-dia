@@ -54,9 +54,16 @@ import {
   verificarERepararParcelas,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
-import { obterParcelasLembreteHoje } from './utils/lembretes';
+import {
+  obterParcelasLembreteHoje,
+  reagendarNotificacoes,
+  cancelarNotificacoesParcela,
+  verificarNotificacaoResumoAtrasadas,
+  inicializarOuvinteNotificacoes,
+} from './utils/lembretes';
 import { executarCopiaAutomaticaSemanalSeNecessario } from './utils/copiaAutomatica';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
+import { App as CapApp } from '@capacitor/app';
 
 export default function App() {
   // Modo Escuro (segue o sistema por padrão, com opção manual)
@@ -156,6 +163,43 @@ export default function App() {
     carregarDados();
   }, [carregarDados]);
 
+  // Ouvinte de toque na notificação: abre o app na tela Início, no mês da parcela (Item 7)
+  useEffect(() => {
+    const removerOuvinte = inicializarOuvinteNotificacoes((mesAno) => {
+      setMesSelecionado(mesAno);
+      setAbaAtiva('inicio');
+    });
+    return () => {
+      removerOuvinte();
+    };
+  }, []);
+
+  // Reagendamento ao voltar do segundo plano (appStateChange) ou tela visível (Item 6)
+  useEffect(() => {
+    let handleListener: any = null;
+    try {
+      CapApp.addListener('appStateChange', (state) => {
+        if (state.isActive) {
+          reagendarNotificacoes().catch(() => {});
+        }
+      }).then((h) => {
+        handleListener = h;
+      }).catch(() => {});
+    } catch {}
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        reagendarNotificacoes().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (handleListener?.remove) handleListener.remove();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
+
   // Executa verificação e reparação de parcelas e exibe lembretes internos na abertura
   useEffect(() => {
     if (!splashConcluida) return;
@@ -177,10 +221,15 @@ export default function App() {
         console.warn('Aviso ao executar cópia automática semanal:', err);
       });
 
-    // Lembrete exibido dentro do app na abertura (contas que vencem hoje ou atrasadas)
+    // Lembrete exibido dentro do app na abertura e agendamento nativo do Android (Itens 3, 4, 6)
     if (!lembretesAberturaExibidosRef.current) {
       lembretesAberturaExibidosRef.current = true;
       listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
+        // Agendamento das notificações nativas do Android dos próximos 45 dias
+        reagendarNotificacoes(todasPendentes).catch(() => {});
+        // Resumo de contas atrasadas (Item 4)
+        verificarNotificacaoResumoAtrasadas(todasPendentes).catch(() => {});
+
         const lembretes = obterParcelasLembreteHoje(todasPendentes);
         if (lembretes.length > 0) {
           setParcelasLembreteHoje(lembretes);
@@ -196,12 +245,14 @@ export default function App() {
     }
   }, [abaAtiva, carregarParcelamentos]);
 
-  // Ações de Pagamento
+  // Ações de Pagamento (Item 6: cancela as notificações da parcela ao marcar como paga e reagenda)
   const handlePagarParcelaRapido = async (parcela: Parcela) => {
     // Se for pagamento direto pelo círculo, quita na data de hoje e dispara confete
     const hoje = new Date().toISOString().slice(0, 10);
     await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
     dispararConfetes();
+    await cancelarNotificacoesParcela(parcela.id);
+    await reagendarNotificacoes();
     await carregarDados();
   };
 
@@ -209,12 +260,16 @@ export default function App() {
     const hoje = new Date().toISOString().slice(0, 10);
     await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
     dispararConfetes();
+    await cancelarNotificacoesParcela(parcela.id);
+    await reagendarNotificacoes();
     await carregarDados();
     setParcelasLembreteHoje((prev) => prev.filter((p) => p.id !== parcela.id));
   };
 
   const handleConfirmarModalPagamento = async (parcelaId: number, dataPagamento: string, valorPago: number) => {
     await marcarParcelaComoPaga(parcelaId, dataPagamento, valorPago);
+    await cancelarNotificacoesParcela(parcelaId);
+    await reagendarNotificacoes();
     await carregarDados();
     if (detalhesContaParcelas) {
       const todas = await listarParcelas({ ordenacao: 'vencimento_asc' });
@@ -224,6 +279,7 @@ export default function App() {
 
   const handleDesfazerPagamento = async (parcelaId: number) => {
     await desfazerPagamentoParcela(parcelaId);
+    await reagendarNotificacoes();
     await carregarDados();
     if (detalhesContaParcelas) {
       const todas = await listarParcelas({ ordenacao: 'vencimento_asc' });
@@ -234,6 +290,7 @@ export default function App() {
   const handleSalvarNovaConta = async (input: NovaContaInput): Promise<number> => {
     const id = await criarConta(input);
     await carregarDados(true);
+    await reagendarNotificacoes();
     return id;
   };
 
@@ -263,6 +320,7 @@ export default function App() {
     dados: { descricao: string; categoria_id: number; forma_pagamento: string; observacoes?: string }
   ) => {
     await atualizarConta(contaId, dados);
+    await reagendarNotificacoes();
     await carregarDados();
   };
 
@@ -273,6 +331,7 @@ export default function App() {
     if (detalhesContaParcelas && detalhesContaParcelas[0]?.conta_id === exclusaoPendente.contaId) {
       setDetalhesContaParcelas(null);
     }
+    await reagendarNotificacoes();
     await carregarDados();
   };
 
@@ -283,6 +342,7 @@ export default function App() {
 
   const handleSalvarEdicaoParcela = async (dados: EditarParcelaInput) => {
     await editarParcelaEConta(dados);
+    await reagendarNotificacoes();
     await carregarDados();
   };
 
@@ -301,6 +361,7 @@ export default function App() {
     setDadosDesfazer(dadosRestauracao);
     setSnackbarDesfazerAberto(true);
     setParcelaEmExclusao(null);
+    await reagendarNotificacoes();
     await carregarDados();
   };
 
@@ -310,6 +371,7 @@ export default function App() {
       await restaurarExclusao(dadosDesfazer);
       setDadosDesfazer(null);
       setSnackbarDesfazerAberto(false);
+      await reagendarNotificacoes();
       await carregarDados();
     } catch (err) {
       console.error('Erro ao desfazer exclusão:', err);
@@ -428,6 +490,13 @@ export default function App() {
                 totalParcelas={parcelas.length}
                 totalCategorias={categorias.length}
                 onCriarPorquinho={() => setModalPorquinhoAberto(true)}
+                onAbrirLembretesHoje={() => {
+                  listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
+                    const lembretes = obterParcelasLembreteHoje(todasPendentes);
+                    setParcelasLembreteHoje(lembretes);
+                    setModalLembretesHojeAberto(true);
+                  });
+                }}
               />
             </div>
           )}
