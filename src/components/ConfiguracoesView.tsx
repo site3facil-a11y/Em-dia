@@ -16,6 +16,8 @@ import {
   ChevronUp,
   Wrench,
   X,
+  Globe,
+  Sparkles,
 } from 'lucide-react';
 import {
   exportarArquivoSqlite,
@@ -339,29 +341,6 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Aviso de Lembrete de Backup (+30 dias) */}
-      {diasDesdeUltimoBackup !== null && diasDesdeUltimoBackup >= 30 && (
-        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs sm:text-sm font-medium flex items-start gap-3 shadow-xs animate-in fade-in">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-600 mt-0.5" />
-          <div className="flex-1">
-            <h5 className="font-bold text-amber-950 dark:text-amber-100">
-              Lembrete de Backup Seguro
-            </h5>
-            <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
-              Faz mais de 30 dias desde o seu último backup exportado. Baixe uma cópia do seu arquivo SQLite para manter seus lançamentos protegidos caso limpe o navegador.
-            </p>
-            <button
-              onClick={handleBackupSqlite}
-              disabled={processando}
-              className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Baixar Cópia Agora (.sqlite)</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Notificações de Sucesso ou Erro */}
       {mensagemSucesso && (
         <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs sm:text-sm font-semibold flex items-center gap-2.5 animate-in fade-in">
@@ -394,7 +373,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Desenvolvido por 3facil.com
+                Verifique novas versões pelo GitHub
               </p>
             </div>
           </div>
@@ -409,6 +388,42 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
             <span>{verificandoAtualizacao ? 'Verificando...' : 'Verificar atualização'}</span>
           </button>
         </div>
+      </div>
+
+      {/* Card Desenvolvido por 3facil.com em Destaque */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-blue-50 via-indigo-50/70 to-slate-50 dark:from-slate-900 dark:via-blue-950/40 dark:to-slate-900 border-2 border-blue-200 dark:border-blue-800/70 shadow-sm flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/25 flex-shrink-0">
+            <Globe className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                Créditos do Aplicativo
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                <Sparkles className="w-3 h-3 text-amber-500 fill-amber-500" />
+                Oficial
+              </span>
+            </div>
+            <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight mt-0.5">
+              Desenvolvido pela <span className="text-blue-600 dark:text-blue-400 underline decoration-blue-400/40 underline-offset-4">3facil.com</span>
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Soluções inteligentes, acessíveis e focadas em simplicidade.
+            </p>
+          </div>
+        </div>
+
+        <a
+          href="https://3facil.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs shadow-md shadow-blue-600/20 transition-all cursor-pointer"
+        >
+          <Globe className="w-4 h-4" />
+          <span>Acessar 3facil.com</span>
+        </a>
       </div>
 
       {/* Card Porquinho de Economias (Metas Parceladas) */}
