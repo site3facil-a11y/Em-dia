@@ -152,16 +152,10 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       let dadosAtualizacao: ReleaseInfo | null = null;
       let falhaPages = false;
 
-      // 1. Consulta ao GitHub Pages com timestamp contra cache
+      // 1. Consulta ao GitHub Pages com timestamp contra cache (sem headers customizados para evitar preflight OPTIONS 405)
       try {
         const urlPages = `https://site3facil-a11y.github.io/Em-dia/version.json?t=${Date.now()}`;
-        const resPages = await fetch(urlPages, {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            Pragma: 'no-cache',
-          },
-        });
+        const resPages = await fetch(urlPages);
 
         if (resPages.ok) {
           const jsonPages = await resPages.json();
@@ -198,16 +192,21 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
           if (resGithub.ok) {
             const releaseData = await resGithub.json();
+            const tag = releaseData.tag_name || '';
+            const tagSemV = tag.replace(/^v/, '');
             const assetZip = releaseData.assets?.find(
               (a: any) => a.name?.toLowerCase() === 'dist.zip'
             );
             if (assetZip && assetZip.browser_download_url) {
+              // No Android, a URL do GitHub Releases sofre redirecionamento 302 que falha no plugin.
+              // O GitHub Pages disponibiliza o arquivo estático direto sem redirecionamento.
+              const urlPagesDireta = `https://site3facil-a11y.github.io/Em-dia/dist-${tagSemV}.zip`;
               dadosAtualizacao = {
-                version: releaseData.tag_name || '',
-                url: assetZip.browser_download_url,
+                version: tag,
+                url: urlPagesDireta,
                 size: assetZip.size,
                 notes: releaseData.body,
-                nomeArquivo: 'dist.zip',
+                nomeArquivo: `dist-${tagSemV}.zip`,
                 tag_name: releaseData.tag_name,
                 name: releaseData.name,
                 body: releaseData.body,

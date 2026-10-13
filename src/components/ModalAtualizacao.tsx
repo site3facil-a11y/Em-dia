@@ -152,6 +152,27 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
 
     let statusHead = 'Não realizado';
     let ultimoEventoDownloadFailed: any = null;
+    let urlUsadaEfetiva = downloadUrl;
+
+    // Normalização inteligente de URL:
+    // No Android, links do GitHub Releases (github.com/.../releases/download/...)
+    // retornam HTTP 302 que falham no plugin OkHttp nativo. O GitHub Pages oferece
+    // o arquivo dist-X.Y.Z.zip direto sem redirecionamento.
+    const versaoLimpa = novaVersao.replace(/^v/, '');
+    const urlPagesVersao = `https://site3facil-a11y.github.io/Em-dia/dist-${versaoLimpa}.zip`;
+    const urlPagesFixa = 'https://site3facil-a11y.github.io/Em-dia/dist.zip';
+
+    // Lista ordenada de URLs candidatas para download
+    const urlsCandidatas: string[] = [];
+    if (downloadUrl.startsWith('https://site3facil-a11y.github.io/')) {
+      urlsCandidatas.push(downloadUrl);
+      if (downloadUrl !== urlPagesFixa) urlsCandidatas.push(urlPagesFixa);
+    } else {
+      // Se a URL veio do GitHub Releases, priorizamos o Pages direto para evitar o erro 302
+      urlsCandidatas.push(urlPagesVersao);
+      urlsCandidatas.push(urlPagesFixa);
+      urlsCandidatas.push(downloadUrl);
+    }
 
     try {
       setAtualizando(true);
@@ -171,11 +192,11 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       // 2. Teste HEAD com fetch: apenas informativo, sem bloquear
       setStatusTexto('Testando conexão com o servidor de download...');
       try {
-        const headRes = await fetch(downloadUrl, { method: 'HEAD' });
+        const headRes = await fetch(urlsCandidatas[0], { method: 'HEAD' });
         statusHead = `HTTP ${headRes.status} ${headRes.statusText || 'OK'}`.trim();
       } catch (headErr: any) {
-        statusHead = `Erro (${headErr?.message || 'CORS/Redirecionamento'})`;
-        console.info('Teste HEAD informativo (CORS esperado no GitHub):', headErr);
+        statusHead = `Erro (${headErr?.message || 'Informativo'})`;
+        console.info('Teste HEAD informativo:', headErr);
       }
 
       // 4. Download com até 2 tentativas automáticas com 2 segundos de intervalo
@@ -187,6 +208,10 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
         let downloadListenerHandle: any = null;
         let completeListenerHandle: any = null;
         let failedListenerHandle: any = null;
+
+        // Seleciona a URL candidata para a tentativa
+        const urlParaTentativa = urlsCandidatas[tentativa % urlsCandidatas.length];
+        urlUsadaEfetiva = urlParaTentativa;
 
         try {
           if (tentativa === 0) {
@@ -236,9 +261,9 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
             console.warn('Listener downloadComplete não disponível:', completeListenerErr);
           }
 
-          // 3. Executa download usando a URL do JSON e a versão
+          // 3. Executa download usando a URL e a versão
           const bundleDoDownload = await CapacitorUpdater.download({
-            url: downloadUrl,
+            url: urlParaTentativa,
             version: novaVersao,
           });
 
@@ -320,7 +345,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
 
       // Informações completas de diagnóstico
       setDiagnostico({
-        urlUsada: downloadUrl,
+        urlUsada: urlUsadaEfetiva || downloadUrl,
         mensagem: msgPrincipal,
         erroCompletoJson,
         eventoDownloadFailed: eventoFailedJson || undefined,
