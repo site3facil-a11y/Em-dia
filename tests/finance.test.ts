@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  parseMoedaParaCentavos,
   reaisParaCentavos,
   centavosParaReais,
   formatarCentavos,
@@ -7,6 +8,29 @@ import {
 } from '../src/utils/finance';
 
 describe('Integridade Financeira em Centavos', () => {
+  it('garante que o parser de dinheiro grava os centavos com exatidão conforme requisitos', () => {
+    // 215 vira 21500 centavos
+    expect(parseMoedaParaCentavos('215')).toBe(21500);
+    expect(parseMoedaParaCentavos(215)).toBe(21500);
+    expect(parseMoedaParaCentavos('215,00')).toBe(21500);
+
+    // 215,5 vira 21550 centavos
+    expect(parseMoedaParaCentavos('215,5')).toBe(21550);
+    expect(parseMoedaParaCentavos('215.5')).toBe(21550);
+    expect(parseMoedaParaCentavos(215.5)).toBe(21550);
+
+    // 1.234,56 vira 123456 centavos
+    expect(parseMoedaParaCentavos('1.234,56')).toBe(123456);
+    expect(parseMoedaParaCentavos('1234.56')).toBe(123456);
+    expect(parseMoedaParaCentavos(1234.56)).toBe(123456);
+
+    // Casos adicionais com formatação e espaços
+    expect(parseMoedaParaCentavos('R$ 215,00')).toBe(21500);
+    expect(parseMoedaParaCentavos(' R$ 1.234,56 ')).toBe(123456);
+    expect(parseMoedaParaCentavos('')).toBe(0);
+    expect(parseMoedaParaCentavos('0')).toBe(0);
+  });
+
   it('converte reais para centavos com precisão', () => {
     expect(reaisParaCentavos(100.5)).toBe(10050);
     expect(reaisParaCentavos(0.01)).toBe(1);

@@ -4,15 +4,21 @@
  */
 
 /**
- * Converte valor em Reais (número ou string formatada) para centavos inteiros.
- * Exemplos:
- * 100.5 -> 10050
- * "1.250,90" -> 125090
- * "33,33" -> 3333
+ * Parser rigoroso de valores monetários para centavos inteiros (INTEGER).
+ * Garante conversão sem imprecisão de ponto flutuante:
+ * "215" -> 21500
+ * "215,5" -> 21550
+ * "215.5" -> 21550
+ * "1.234,56" -> 123456
+ * 215 -> 21500
+ * 215.5 -> 21550
+ * 1234.56 -> 123456
  */
-export function reaisParaCentavos(valor: number | string): number {
+export function parseMoedaParaCentavos(valor: number | string | undefined | null): number {
+  if (valor === undefined || valor === null) return 0;
+
   if (typeof valor === 'number') {
-    if (isNaN(valor)) return 0;
+    if (isNaN(valor) || !isFinite(valor)) return 0;
     return Math.round(valor * 100);
   }
 
@@ -21,18 +27,23 @@ export function reaisParaCentavos(valor: number | string): number {
   let limpo = valor.trim();
   if (!limpo) return 0;
 
-  // Remove caracteres que não sejam dígitos, vírgula, ponto ou hífen
+  // Remove símbolos monetários e espaços, preservando dígitos, vírgula, ponto e hífen
   limpo = limpo.replace(/[^\d,.-]/g, '');
 
-  // Trata formato brasileiro (1.234,56)
+  // Trata formato brasileiro (ex: 1.234,56 ou 215,5)
   if (limpo.includes(',')) {
     limpo = limpo.replace(/\./g, '').replace(',', '.');
   }
 
   const num = parseFloat(limpo);
-  if (isNaN(num)) return 0;
+  if (isNaN(num) || !isFinite(num)) return 0;
   return Math.round(num * 100);
 }
+
+/**
+ * Converte valor em Reais (número ou string formatada) para centavos inteiros.
+ */
+export const reaisParaCentavos = parseMoedaParaCentavos;
 
 /**
  * Converte centavos inteiros para valor em Reais (float de exibição).

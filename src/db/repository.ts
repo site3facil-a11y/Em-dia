@@ -113,11 +113,8 @@ export interface NovaContaInput {
 export async function criarConta(input: NovaContaInput): Promise<number> {
   const hoje = getHojeIso();
 
-  // Garante valor em centavos inteiros
-  const valorTotalCentavos =
-    input.valor_total > 1000000 || Number.isInteger(input.valor_total)
-      ? Math.round(input.valor_total)
-      : reaisParaCentavos(input.valor_total);
+  // Garante valor em centavos inteiros (ex: 215 -> 21500, 215.5 -> 21550)
+  const valorTotalCentavos = parseMoedaParaCentavos(input.valor_total);
 
   return await executarEmTransacao((db) => {
     // 1. Garante existência de categoria válida
@@ -238,7 +235,7 @@ export interface EditarParcelaInput {
   parcelaId: number;
   descricao: string;
   categoria_id: number;
-  valor: number; // em centavos ou reais
+  valor: number | string; // em reais (ex: "215", "215,5", "1.234,56" ou 215)
   data_vencimento: string;
   forma_pagamento: string;
   observacoes?: string;
@@ -246,10 +243,8 @@ export interface EditarParcelaInput {
 }
 
 export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<void> {
-  const valorCentavos =
-    dados.valor > 1000000 || Number.isInteger(dados.valor)
-      ? Math.round(dados.valor)
-      : reaisParaCentavos(dados.valor);
+  // Converte rigorosamente para centavos inteiros (215 -> 21500, 215,5 -> 21550, 1.234,56 -> 123456)
+  const valorCentavos = parseMoedaParaCentavos(dados.valor);
 
   await executarEmTransacao((db) => {
     const res = db.exec(
@@ -263,7 +258,7 @@ export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<vo
     const numParcela = res[0].values[0][1] as number;
     const totalParcelas = res[0].values[0][2] as number;
 
-    // Atualiza a parcela atual
+    // 1. Atualiza a parcela atual (apenas esta parcela)
     db.run(
       `UPDATE parcelas 
        SET valor = ?, data_vencimento = ?
@@ -271,7 +266,7 @@ export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<vo
       [valorCentavos, dados.data_vencimento, dados.parcelaId]
     );
 
-    // Atualiza dados da conta pai
+    // 2. Atualiza dados da conta pai (descrição, categoria, forma de pagamento, observações)
     db.run(
       `UPDATE contas 
        SET descricao = ?, categoria_id = ?, forma_pagamento = ?, observacoes = ?
@@ -279,23 +274,60 @@ export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<vo
       [dados.descricao.trim(), dados.categoria_id, dados.forma_pagamento || 'Geral', dados.observacoes || null, contaId]
     );
 
-    // Se escopo for 'esta_e_proximas' em conta parcelada, atualiza as próximas que não estejam pagas
+    // 3. Se escopo for 'esta_e_proximas' em conta parcelada, atualiza esta e todas as pendentes seguintes, NUNCA as pagas
     if (dados.escopo === 'esta_e_proximas' && totalParcelas > 1) {
       db.run(
         `UPDATE parcelas 
          SET valor = ?
-         WHERE conta_id = ? AND numero_parcela > ? AND status = 'pendente';`,
+         WHERE conta_id = ? AND numero_parcela > ? AND status != 'pago';`,
         [valorCentavos, contaId, numParcela]
       );
     }
 
-    // Depois de qualquer edição, atualiza contas.valor_total para a soma real das parcelas, dentro da mesma transação
+    // 4. Recalcula contas.valor_total como a soma real de todas as parcelas da conta, dentro da mesma transação
     db.run(
       `UPDATE contas 
        SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = contas.id)
        WHERE id = ?;`,
       [contaId]
     );
+
+    // 5. Releitura imediata da linha do banco para verificação de integridade (Item 3)
+    const verifyRes = db.exec('SELECT valor FROM parcelas WHERE id = ?;', [dados.parcelaId]);
+    const valorGravado = verifyRes[0]?.values[0]?.[0] as number;
+    if (valorGravado !== valorCentavos) {
+      console.error('Divergência ao gravar parcela:', {
+        valorDigitado: dados.valor,
+        valorGravado,
+        parcelaId: dados.parcelaId,
+      });
+      throw new Error(
+        `Divergência na gravação: valor gravado no SQLite (${valorGravado} centavos) difere do valor esperado (${valorCentavos} centavos).`
+      );
+    }
+
+    if (dados.escopo === 'esta_e_proximas' && totalParcelas > 1) {
+      const verifyProx = db.exec(
+        "SELECT id, valor FROM parcelas WHERE conta_id = ? AND numero_parcela > ? AND status != 'pago';",
+        [contaId, numParcela]
+      );
+      if (verifyProx[0]?.values) {
+        for (const row of verifyProx[0].values) {
+          const pId = row[0] as number;
+          const pVal = row[1] as number;
+          if (pVal !== valorCentavos) {
+            console.error('Divergência ao gravar parcela subsequente:', {
+              valorDigitado: dados.valor,
+              valorGravado: pVal,
+              parcelaId: pId,
+            });
+            throw new Error(
+              `Divergência na parcela ${pId}: gravado ${pVal} centavos, esperado ${valorCentavos} centavos.`
+            );
+          }
+        }
+      }
+    }
   });
 }
 

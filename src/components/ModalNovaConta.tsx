@@ -28,6 +28,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [lembreteAtivo, setLembreteAtivo] = useState(false);
   const [observacoes, setObservacoes] = useState('');
   const [erro, setErro] = useState<string | null>(null);
+  const [campoParcelasInvalido, setCampoParcelasInvalido] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
   if (!aberto) return null;
@@ -58,6 +59,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setCampoParcelasInvalido(false);
     if (!descricao.trim()) {
       setErro('Informe a descrição da conta.');
       return;
@@ -71,8 +73,9 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
       return;
     }
     if (tipo === 'parcelada') {
-      if (!numeroParcelas || isNaN(parcelasNum) || parcelasNum < 1) {
-        setErro('Informe o número de parcelas.');
+      if (!numeroParcelas || isNaN(parcelasNum) || parcelasNum < 2 || parcelasNum > 120) {
+        setErro('Informe o número de parcelas');
+        setCampoParcelasInvalido(true);
         return;
       }
     }
@@ -255,11 +258,9 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 {tipo === 'parcelada'
                   ? modoValorParcelada === 'parcela'
-                    ? 'Valor da Parcela (R$) *'
-                    : 'Valor Total da Compra (R$) *'
-                  : tipo === 'recorrente'
-                  ? 'Valor Mensal da Conta (R$) *'
-                  : 'Valor a Pagar (R$) *'}
+                    ? 'Valor da parcela (R$) *'
+                    : 'Valor total (R$) *'
+                  : 'Valor (R$) *'}
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -301,40 +302,43 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
                 <label className="block text-xs font-bold text-blue-950 dark:text-blue-200">
                   Número de Parcelas *
                 </label>
-                {parcelasNum > 0 && valorDigitadoNum > 0 ? (
+                {parcelasNum >= 2 && valorDigitadoNum > 0 ? (
                   <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400 font-mono">
                     {parcelasNum} parcelas de {formatarMoeda(valorUnitarioCalculado)} (total {formatarMoeda(valorTotalFinal)})
                   </span>
                 ) : (
-                  <span className="text-[11px] font-semibold text-slate-400">
-                    Insira o número de parcelas
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    Preencha o valor e o número de parcelas
                   </span>
                 )}
               </div>
               <input
-                type="number"
-                min="1"
-                max="120"
+                type="text"
+                inputMode="numeric"
                 required
                 value={numeroParcelas}
+                placeholder="Ex.: 12"
                 onChange={(e) => {
+                  setCampoParcelasInvalido(false);
                   const val = e.target.value;
                   if (val === '') {
                     setNumeroParcelas('');
                     return;
                   }
-                  const num = parseInt(val, 10);
-                  if (!isNaN(num)) {
-                    setNumeroParcelas(Math.min(120, Math.max(1, num)));
-                  }
+                  // Permite digitar livremente apenas números inteiros
+                  const clean = val.replace(/\D/g, '');
+                  setNumeroParcelas(clean);
                 }}
-                className="w-full bg-white dark:bg-slate-800 border border-blue-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                placeholder="Ex: 9"
+                className={`w-full bg-white dark:bg-slate-800 border rounded-xl px-3.5 py-2 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 transition-all ${
+                  campoParcelasInvalido
+                    ? 'border-red-500 ring-2 ring-red-500/30 dark:border-red-500'
+                    : 'border-blue-200 dark:border-slate-700 focus:ring-blue-600'
+                }`}
               />
               <p className="text-[11px] text-blue-800/80 dark:text-blue-300">
-                {parcelasNum > 0
-                  ? `Serão criadas todas as ${parcelasNum} parcelas a partir de ${formatarData(dataVencimento)}, aparecendo em cada mês correspondente.`
-                  : 'Informe a quantidade de parcelas da compra.'}
+                {parcelasNum >= 2 && valorDigitadoNum > 0
+                  ? `${parcelasNum} parcelas de ${formatarMoeda(valorUnitarioCalculado)} (total ${formatarMoeda(valorTotalFinal)}), a partir de ${formatarData(dataVencimento)}`
+                  : 'Preencha o valor e o número de parcelas'}
               </p>
             </div>
           )}

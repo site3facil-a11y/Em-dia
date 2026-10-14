@@ -52,6 +52,7 @@ import {
   DadosRestauracaoExclusao,
   registrarNotificacaoEnviadaNoBanco,
   verificarERepararParcelas,
+  recalcularTotaisContas,
 } from './db/repository';
 import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
 import {
@@ -204,15 +205,18 @@ export default function App() {
   useEffect(() => {
     if (!splashConcluida) return;
 
-    // Item 4: Execute também uma vez na inicialização, em transação
-    verificarERepararParcelas()
-      .then((resumo) => {
-        if (resumo.parcelasGeradas > 0) {
+    // Item 4: Recalcular totais e reparar parcelas na inicialização de forma idempotente
+    Promise.all([
+      verificarERepararParcelas(),
+      recalcularTotaisContas(),
+    ])
+      .then(([resumoReparacao, resumoTotais]) => {
+        if (resumoReparacao.parcelasGeradas > 0 || resumoTotais.contasCorrigidas > 0) {
           carregarDados(true);
         }
       })
       .catch((err) => {
-        console.warn('Aviso ao verificar parcelas na inicialização:', err);
+        console.warn('Aviso ao verificar e recalcular na inicialização:', err);
       });
 
     // Cópia automática semanal do banco de dados (Item 5)
