@@ -94,6 +94,7 @@ export interface ParcelamentoItem {
   saldo_restante: number;
   proximo_vencimento: string | null;
   status_geral: 'concluido' | 'em_andamento' | 'com_atraso';
+  texto_parcelas?: string;
   parcelas: Parcela[];
 }
 
