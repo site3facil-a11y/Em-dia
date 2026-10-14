@@ -106,6 +106,8 @@ export interface NovaContaInput {
   data_primeiro_vencimento: string; // YYYY-MM-DD
   numero_parcelas?: number; // Para parceladas
   frequencia_recorrencia?: FrequenciaRecorrencia;
+  modo_valor_parcelado?: 'parcela' | 'total';
+  valor_parcela?: number; // Valor de cada parcela se modo for 'parcela'
 }
 
 export async function criarConta(input: NovaContaInput): Promise<number> {
@@ -179,9 +181,25 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
         );
       }
     } else if (input.tipo === 'parcelada') {
-      // Parcelada: divide os centavos exatamente distribuindo o resto na 1ª parcela
       const totalParcelas = Math.max(1, input.numero_parcelas || 1);
-      const parcelasCentavos = dividirEmParcelas(valorTotalCentavos, totalParcelas);
+
+      let parcelasCentavos: number[];
+      if (
+        input.modo_valor_parcelado === 'parcela' &&
+        input.valor_parcela !== undefined &&
+        input.valor_parcela > 0
+      ) {
+        // Se informado o valor da parcela (ex: R$ 215,00 em 9x = R$ 1.935,00)
+        // Todas as parcelas têm rigorosamente esse valor em centavos
+        const valParcCentavos =
+          input.valor_parcela > 1000000 || Number.isInteger(input.valor_parcela)
+            ? Math.round(input.valor_parcela)
+            : reaisParaCentavos(input.valor_parcela);
+        parcelasCentavos = Array(totalParcelas).fill(valParcCentavos);
+      } else {
+        // Se informado valor total da compra: divisão exata com resto na primeira parcela
+        parcelasCentavos = dividirEmParcelas(valorTotalCentavos, totalParcelas);
+      }
 
       let dataVenc = input.data_primeiro_vencimento;
       for (let i = 0; i < totalParcelas; i++) {
@@ -194,6 +212,14 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
           [contaId, i + 1, totalParcelas, parcelasCentavos[i], dataVenc]
         );
       }
+
+      // Atualiza contas.valor_total para a soma real de todas as parcelas criadas
+      db.run(
+        `UPDATE contas 
+         SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = contas.id)
+         WHERE id = ?;`,
+        [contaId]
+      );
     }
 
     return contaId;
@@ -262,6 +288,14 @@ export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<vo
         [valorCentavos, contaId, numParcela]
       );
     }
+
+    // Depois de qualquer edição, atualiza contas.valor_total para a soma real das parcelas, dentro da mesma transação
+    db.run(
+      `UPDATE contas 
+       SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = contas.id)
+       WHERE id = ?;`,
+      [contaId]
+    );
   });
 }
 
@@ -965,6 +999,70 @@ export async function verificarERepararParcelas(): Promise<ResumoReparacaoParcel
     }
 
     return resumo;
+  });
+}
+
+export interface ResumoRecalculoTotais {
+  contasVerificadas: number;
+  contasCorrigidas: number;
+  detalhes: Array<{
+    contaId: number;
+    descricao: string;
+    valorAnterior: number;
+    valorNovo: number;
+  }>;
+}
+
+/**
+ * Executa de forma idempotente a sincronização de contas.valor_total com a soma real de suas parcelas
+ * UPDATE contas SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = contas.id)
+ */
+export async function recalcularTotaisContas(): Promise<ResumoRecalculoTotais> {
+  return await executarEmTransacao((db) => {
+    const stmt = db.prepare(`
+      SELECT 
+        c.id, 
+        c.descricao, 
+        c.valor_total,
+        COALESCE((SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = c.id), 0) AS soma_real
+      FROM contas c;
+    `);
+
+    const contas: any[] = [];
+    while (stmt.step()) {
+      contas.push(stmt.getAsObject());
+    }
+    stmt.free();
+
+    const detalhes: Array<{
+      contaId: number;
+      descricao: string;
+      valorAnterior: number;
+      valorNovo: number;
+    }> = [];
+
+    for (const c of contas) {
+      if (c.soma_real > 0 && c.valor_total !== c.soma_real) {
+        detalhes.push({
+          contaId: c.id,
+          descricao: c.descricao,
+          valorAnterior: c.valor_total,
+          valorNovo: c.soma_real,
+        });
+      }
+    }
+
+    db.run(`
+      UPDATE contas 
+      SET valor_total = (SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = contas.id)
+      WHERE EXISTS (SELECT 1 FROM parcelas p WHERE p.conta_id = contas.id);
+    `);
+
+    return {
+      contasVerificadas: contas.length,
+      contasCorrigidas: detalhes.length,
+      detalhes,
+    };
   });
 }
 

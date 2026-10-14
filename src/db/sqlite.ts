@@ -559,6 +559,17 @@ export async function getDb(): Promise<Database> {
       console.warn('Aviso ao inicializar categorias padrão:', err);
     }
 
+    // ETAPA 6.5: Reparo idempotente de totais de contas (sincroniza contas.valor_total com soma real das parcelas)
+    try {
+      db.run(`
+        UPDATE contas 
+        SET valor_total = (SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = contas.id)
+        WHERE EXISTS (SELECT 1 FROM parcelas p WHERE p.conta_id = contas.id);
+      `);
+    } catch (err) {
+      console.warn('Aviso ao recalcular totais de contas na inicialização:', err);
+    }
+
     // ETAPA 7: Persistência inicial
     try {
       const exported = db.export();

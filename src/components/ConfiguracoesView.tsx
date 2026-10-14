@@ -22,6 +22,7 @@ import {
   Cloud,
   Mail,
   Clock,
+  Calculator,
 } from 'lucide-react';
 import {
   exportarArquivoSqlite,
@@ -35,7 +36,10 @@ import {
   gerarCsvParcelas,
   verificarERepararParcelas,
   ResumoReparacaoParcelas,
+  recalcularTotaisContas,
+  ResumoRecalculoTotais,
 } from '../db/repository';
+import { formatarMoeda } from '../utils/formatters';
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
 import { compararVersoes } from '../utils/versao';
 import {
@@ -78,6 +82,9 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [reparandoParcelas, setReparandoParcelas] = useState(false);
   const [resumoReparacao, setResumoReparacao] = useState<ResumoReparacaoParcelas | null>(null);
   const [modalResumoReparacaoAberto, setModalResumoReparacaoAberto] = useState(false);
+  const [recalculandoTotais, setRecalculandoTotais] = useState(false);
+  const [resumoRecalculo, setResumoRecalculo] = useState<ResumoRecalculoTotais | null>(null);
+  const [modalResumoRecalculoAberto, setModalResumoRecalculoAberto] = useState(false);
   const [qtdLembretes, setQtdLembretes] = useState(() => obterContasComLembrete().length);
   const [pluginNotificacoesDisponivel] = useState(() => isLocalNotificationsDisponivel());
   const [configLembretes, setConfigLembretes] = useState<ConfiguracaoLembretes>(() => obterConfiguracaoLembretes());
@@ -258,6 +265,27 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       setErro('Erro ao verificar e reparar parcelas: ' + (err?.message || err));
     } finally {
       setReparandoParcelas(false);
+    }
+  };
+
+  // Recalcular Totais das Contas de forma idempotente (Item 4)
+  const handleRecalcularTotais = async () => {
+    try {
+      setRecalculandoTotais(true);
+      setErro(null);
+      const resumo = await recalcularTotaisContas();
+      setResumoRecalculo(resumo);
+      setModalResumoRecalculoAberto(true);
+      await onDadosModificados();
+      if (resumo.contasCorrigidas > 0) {
+        notificarSucesso(`Totais recalculados: ${resumo.contasCorrigidas} conta(s) corrigida(s) com sucesso!`);
+      } else {
+        notificarSucesso('Todos os totais das contas já estavam perfeitamente calculados e sincronizados.');
+      }
+    } catch (err: any) {
+      setErro('Erro ao recalcular totais: ' + (err?.message || err));
+    } finally {
+      setRecalculandoTotais(false);
     }
   };
 
@@ -811,6 +839,34 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         </div>
       </div>
 
+      {/* Recalcular Totais das Contas (Item 4) */}
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-200 dark:border-blue-800">
+              <Calculator className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                Recalcular Totais das Contas
+              </h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Sincroniza o valor total contratado de cada conta somando as linhas reais de suas parcelas no SQLite.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleRecalcularTotais}
+            disabled={recalculandoTotais}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${recalculandoTotais ? 'animate-spin' : ''}`} />
+            <span>{recalculandoTotais ? 'Recalculando...' : 'Recalcular totais'}</span>
+          </button>
+        </div>
+      </div>
+
       {/* Persistência de Armazenamento Local (Storage Persistence) */}
       <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1060,6 +1116,89 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
             <button
               onClick={() => setModalResumoReparacaoAberto(false)}
+              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Concluir
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Resumo do Recálculo de Totais das Contas (Item 4) */}
+      {modalResumoRecalculoAberto && resumoRecalculo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
+          style={{
+            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
+            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
+          }}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Recálculo de Totais
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sincronização com a soma real das parcelas
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setModalResumoRecalculoAberto(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] text-slate-400 block font-bold">Contas Verificadas</span>
+                <span className="text-base font-mono font-extrabold text-slate-900 dark:text-white">
+                  {resumoRecalculo.contasVerificadas}
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-100 dark:border-blue-900">
+                <span className="text-[10px] text-blue-500 dark:text-blue-300 block font-bold">Contas Corrigidas</span>
+                <span className="text-base font-mono font-extrabold text-blue-600 dark:text-blue-400">
+                  {resumoRecalculo.contasCorrigidas}
+                </span>
+              </div>
+            </div>
+
+            {resumoRecalculo.detalhes.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                  Contas com valor total corrigido:
+                </span>
+                {resumoRecalculo.detalhes.map((d) => (
+                  <div
+                    key={d.contaId}
+                    className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 text-xs flex justify-between items-center"
+                  >
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 truncate pr-2">
+                      {d.descricao}
+                    </span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap">
+                      {formatarMoeda(d.valorAnterior)} ➔ {formatarMoeda(d.valorNovo)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-3 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/40 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <span>Todos os totais das contas já estavam perfeitamente calculados e sincronizados!</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setModalResumoRecalculoAberto(false)}
               className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Concluir

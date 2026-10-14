@@ -28,10 +28,26 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
   const [expandidoId, setExpandidoId] = useState<number | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'em_andamento' | 'concluido'>('todos');
 
-  // Métricas consolidadas dos parcelamentos
-  const totalParcelado = itens.reduce((acc, i) => acc + i.valor_total, 0);
-  const totalAmortizado = itens.reduce((acc, i) => acc + i.valor_pago, 0);
-  const saldoDevedorGeral = itens.reduce((acc, i) => acc + i.saldo_restante, 0);
+  const mesAtual = new Date().toISOString().slice(0, 7);
+
+  // Métricas consolidadas dos parcelamentos calculadas somando as linhas reais das parcelas
+  const totalParcelado = itens.reduce((acc, i) => {
+    return acc + i.parcelas.reduce((s, p) => s + p.valor, 0);
+  }, 0);
+
+  const totalAmortizado = itens.reduce((acc, i) => {
+    return acc + i.parcelas.filter((p) => p.status === 'pago').reduce((s, p) => s + (p.valor_pago || p.valor), 0);
+  }, 0);
+
+  const saldoDevedorGeral = itens.reduce((acc, i) => {
+    return acc + i.parcelas.filter((p) => p.status !== 'pago').reduce((s, p) => s + p.valor, 0);
+  }, 0);
+
+  const aPagarNesteMes = itens.reduce((acc, i) => {
+    return acc + i.parcelas
+      .filter((p) => p.status !== 'pago' && p.data_vencimento.startsWith(mesAtual))
+      .reduce((s, p) => s + p.valor, 0);
+  }, 0);
 
   const toggleExpandir = (contaId: number) => {
     setExpandidoId((atual) => (atual === contaId ? null : contaId));
@@ -54,7 +70,7 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Resumo Unificado Compacto (Sem poluição de textos e números transbordando) */}
+      {/* Resumo Unificado com 4 Indicadores (Saldo Restante, Total Contratado, Já Quitado, A Pagar Neste Mês) */}
       <div className="bg-gradient-to-br from-blue-900 via-blue-950 to-slate-900 text-white rounded-3xl p-5 shadow-lg shadow-blue-950/20 border border-blue-800/40 relative overflow-hidden">
         <div className="text-center pb-3 border-b border-white/10">
           <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider block">
@@ -65,19 +81,25 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
           </h2>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 pt-3 text-center">
+        <div className="grid grid-cols-3 gap-2 pt-3 text-center">
           <div>
-            <span className="text-[11px] text-blue-300 block">Total Contratado</span>
-            <span className="text-sm font-bold font-mono text-slate-100">
+            <span className="text-[10px] text-blue-300 block">Total Contratado</span>
+            <span className="text-xs sm:text-sm font-bold font-mono text-slate-100">
               {formatarMoeda(totalParcelado)}
             </span>
           </div>
           <div>
-            <span className="text-[11px] text-blue-300 block">
+            <span className="text-[10px] text-blue-300 block">
               Já Quitado ({totalParcelado > 0 ? ((totalAmortizado / totalParcelado) * 100).toFixed(0) : 0}%)
             </span>
-            <span className="text-sm font-bold font-mono text-emerald-400">
+            <span className="text-xs sm:text-sm font-bold font-mono text-emerald-400">
               {formatarMoeda(totalAmortizado)}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-blue-300 block">A Pagar Neste Mês</span>
+            <span className="text-xs sm:text-sm font-bold font-mono text-amber-300">
+              {formatarMoeda(aPagarNesteMes)}
             </span>
           </div>
         </div>
@@ -142,9 +164,28 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
           {itensFiltrados.map((item) => {
             const isExpandido = expandidoId === item.conta_id;
             const isEconomia = item.categoria_nome?.toLowerCase().includes('poupança') || item.categoria_nome?.toLowerCase().includes('economia');
-            const pct = item.total_parcelas > 0 ? (item.parcelas_pagas / item.total_parcelas) * 100 : 0;
-            const valorParcelaMedia = item.total_parcelas > 0 ? item.valor_total / item.total_parcelas : 0;
-            const isQuitado = item.saldo_restante <= 0;
+            
+            // Cálculos baseados rigorosamente nas linhas reais da tabela parcelas
+            const totalContratadoItem = item.parcelas.reduce((acc, p) => acc + p.valor, 0);
+            const totalQuitadoItem = item.parcelas
+              .filter((p) => p.status === 'pago')
+              .reduce((acc, p) => acc + (p.valor_pago || p.valor), 0);
+            const faltaPagarItem = item.parcelas
+              .filter((p) => p.status !== 'pago')
+              .reduce((acc, p) => acc + p.valor, 0);
+            const isQuitado = faltaPagarItem <= 0;
+            const pct = totalContratadoItem > 0 ? (totalQuitadoItem / totalContratadoItem) * 100 : 0;
+
+            // Formatação do texto do card: se todas iguais "9 × R$ 215,00", se diferentes "de R$ X a R$ Y"
+            const valoresParcelas = item.parcelas.map((p) => p.valor);
+            const primeiroValor = valoresParcelas[0] || 0;
+            const todasIguais = valoresParcelas.length > 0 && valoresParcelas.every((v) => v === primeiroValor);
+            const textoParcelasCard =
+              valoresParcelas.length === 0
+                ? ''
+                : todasIguais
+                ? `${item.parcelas.length} × ${formatarMoeda(primeiroValor)}`
+                : `de ${formatarMoeda(Math.min(...valoresParcelas))} a ${formatarMoeda(Math.max(...valoresParcelas))}`;
 
             return (
               <div
@@ -178,7 +219,7 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
                     </div>
 
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      {item.categoria_nome} • {isEconomia ? 'Meta de' : '~'}{formatarMoeda(valorParcelaMedia)}/mês
+                      {item.categoria_nome} • {isEconomia ? 'Meta de ' : ''}{textoParcelasCard}
                     </p>
                   </div>
 
@@ -194,10 +235,10 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
                         ? 'text-emerald-600 dark:text-emerald-400'
                         : 'text-slate-900 dark:text-white'
                     }`}>
-                      {formatarMoeda(isEconomia ? item.valor_pago : item.saldo_restante)}
+                      {formatarMoeda(isEconomia ? totalQuitadoItem : faltaPagarItem)}
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono block">
-                      {isEconomia ? 'meta de ' : 'de '}{formatarMoeda(item.valor_total)}
+                      {isEconomia ? 'meta de ' : 'de '}{formatarMoeda(totalContratadoItem)}
                     </span>
                   </div>
                 </div>

@@ -543,13 +543,6 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
           <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100 capitalize block">
             {formatarMesAno(mesSelecionado)}
           </span>
-          {totalMes > 0 && (
-            <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-              <span>A pagar: <strong className="text-rose-600 dark:text-rose-400">{formatarMoeda(aPagarMes)}</strong></span>
-              <span>•</span>
-              <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400">{formatarMoeda(pagoMes)}</strong></span>
-            </div>
-          )}
         </div>
 
         <button
