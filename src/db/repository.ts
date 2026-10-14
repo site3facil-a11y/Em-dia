@@ -721,8 +721,8 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
   const db = await getDb();
   const hoje = getHojeIso();
 
-  // Seleciona toda conta com mais de 1 parcela na tabela parcelas (total_parcelas > 1 ou count > 1)
-  // com JOIN em contas e categorias, independentemente de contas.tipo
+  // Seleciona exclusivamente contas com parcelas fixas (c.tipo = 'parcelada')
+  // Ficam de fora as contas recorrentes e contas únicas
   const stmtContas = db.prepare(`
     SELECT 
       c.id AS conta_id,
@@ -738,8 +738,8 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
     FROM contas c
     INNER JOIN parcelas p ON p.conta_id = c.id
     INNER JOIN categorias cat ON c.categoria_id = cat.id
+    WHERE c.tipo = 'parcelada'
     GROUP BY c.id
-    HAVING MAX(p.total_parcelas) > 1 OR COUNT(p.id) > 1
     ORDER BY c.id DESC;
   `);
 

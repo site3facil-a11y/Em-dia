@@ -499,42 +499,6 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
 
   return (
     <div className="space-y-4 pb-28">
-      {/* CARD PRINCIPAL SUPERIOR: TOTAL DE DESPESAS DO MÊS (SEM O BOTÃO BRANCO) */}
-      <div className="bg-gradient-to-br from-blue-900 via-blue-950 to-slate-900 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950 text-white rounded-3xl p-5 shadow-xl shadow-blue-950/25 border border-blue-800/40 dark:border-blue-900/40 relative overflow-hidden">
-        {/* Efeitos decorativos de luz e degradê suave */}
-        <div className="absolute -right-8 -top-8 w-40 h-40 bg-blue-500/20 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute -left-8 -bottom-8 w-36 h-36 bg-indigo-500/20 rounded-full blur-xl pointer-events-none" />
-
-        <div className="relative z-10 text-center">
-          <span className="text-blue-200 dark:text-blue-300 text-xs font-bold tracking-wide uppercase">
-            Total de Despesas do Mês
-          </span>
-          <h2 className="text-3xl font-extrabold tracking-tight font-mono mt-1 text-white">
-            {formatarMoeda(totalMes)}
-          </h2>
-
-          {/* Cards internos: Pago vs A Pagar */}
-          <div className="grid grid-cols-2 gap-2.5 mt-3.5">
-            <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-2xl p-2.5 text-left border border-white/15">
-              <span className="text-[11px] text-blue-200 dark:text-blue-300 font-medium block">
-                Pago
-              </span>
-              <span className="text-sm font-bold font-mono text-emerald-300">
-                {formatarMoeda(pagoMes)}
-              </span>
-            </div>
-
-            <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-2xl p-2.5 text-left border border-white/15">
-              <span className="text-[11px] text-blue-200 dark:text-blue-300 font-medium block">
-                A pagar
-              </span>
-              <span className="text-sm font-bold font-mono text-amber-300">
-                {formatarMoeda(aPagarMes)}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* LEMBRETE DE VENCIMENTO */}
       {(atrasadasQtd > 0 || vencendoHojeQtd > 0) && (
@@ -575,9 +539,18 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
           <ChevronLeft className="w-5 h-5" />
         </button>
 
-        <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100 capitalize">
-          {formatarMesAno(mesSelecionado)}
-        </span>
+        <div className="text-center px-1">
+          <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100 capitalize block">
+            {formatarMesAno(mesSelecionado)}
+          </span>
+          {totalMes > 0 && (
+            <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+              <span>A pagar: <strong className="text-rose-600 dark:text-rose-400">{formatarMoeda(aPagarMes)}</strong></span>
+              <span>•</span>
+              <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400">{formatarMoeda(pagoMes)}</strong></span>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={() => navegarMes(1)}
