@@ -19,7 +19,7 @@ import {
   CofrinhoComProgresso,
 } from '../types';
 import { getHojeIso, calcularProximoVencimento, extrairPartesData, derivarStatus } from '../utils/dates';
-import { dividirEmParcelas, reaisParaCentavos, centavosParaReais } from '../utils/finance';
+import { dividirEmParcelas, reaisParaCentavos, centavosParaReais, parseMoedaParaCentavos } from '../utils/finance';
 
 function formatarErroAmigavel(err: any): Error {
   const msg = (err?.message || '').toLowerCase();
@@ -180,23 +180,15 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
     } else if (input.tipo === 'parcelada') {
       const totalParcelas = Math.max(1, input.numero_parcelas || 1);
 
-      let parcelasCentavos: number[];
-      if (
-        input.modo_valor_parcelado === 'parcela' &&
-        input.valor_parcela !== undefined &&
-        input.valor_parcela > 0
-      ) {
-        // Se informado o valor da parcela (ex: R$ 215,00 em 9x = R$ 1.935,00)
-        // Todas as parcelas têm rigorosamente esse valor em centavos
-        const valParcCentavos =
-          input.valor_parcela > 1000000 || Number.isInteger(input.valor_parcela)
-            ? Math.round(input.valor_parcela)
-            : reaisParaCentavos(input.valor_parcela);
-        parcelasCentavos = Array(totalParcelas).fill(valParcCentavos);
-      } else {
-        // Se informado valor total da compra: divisão exata com resto na primeira parcela
-        parcelasCentavos = dividirEmParcelas(valorTotalCentavos, totalParcelas);
-      }
+      // O valor digitado é sempre o de UMA parcela/ocorrência.
+      // Em conta parcelada, o total = valor da parcela × número de parcelas,
+      // e cada uma das N parcelas é gravada com exatamente esse valor (em centavos), sem divisão nem arredondamento.
+      const valParcCentavos = parseMoedaParaCentavos(
+        input.valor_parcela !== undefined && input.valor_parcela !== null
+          ? input.valor_parcela
+          : input.valor_total
+      );
+      const parcelasCentavos: number[] = Array(totalParcelas).fill(valParcCentavos);
 
       let dataVenc = input.data_primeiro_vencimento;
       for (let i = 0; i < totalParcelas; i++) {

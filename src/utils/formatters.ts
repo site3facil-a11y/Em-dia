@@ -1,16 +1,12 @@
 import confetti from 'canvas-confetti';
 import { StatusParcela } from '../types';
+import { formatarCentavos } from './finance';
 
 export function formatarMoeda(valor?: number | null): string {
   if (valor === undefined || valor === null || isNaN(valor)) {
     return 'R$ 0,00';
   }
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(valor);
+  return formatarCentavos(valor);
 }
 
 export function formatarData(dataStr?: string | null): string {

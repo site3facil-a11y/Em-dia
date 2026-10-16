@@ -347,7 +347,11 @@ export default function App() {
   const handleSalvarEdicaoParcela = async (dados: EditarParcelaInput) => {
     await editarParcelaEConta(dados);
     await reagendarNotificacoes();
-    await carregarDados();
+    await carregarDados(true);
+    if (detalhesContaParcelas) {
+      const todas = await listarParcelas({ ordenacao: 'vencimento_asc' });
+      setDetalhesContaParcelas(todas.filter((p) => p.conta_id === detalhesContaParcelas[0]?.conta_id));
+    }
   };
 
   const handleAbrirExclusaoParcela = (parcela: Parcela) => {
