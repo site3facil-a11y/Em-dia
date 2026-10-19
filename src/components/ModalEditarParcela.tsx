@@ -214,11 +214,22 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
                   disabled={isPaga}
                   value={valorStr}
                   onChange={(e) => setValorStr(e.target.value)}
+                  onBlur={handleValorBlur}
                   className={`w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 ${
                     isPaga ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-900' : ''
                   }`}
                 />
               </div>
+              {sugestaoFormatada && !isPaga && (
+                <button
+                  type="button"
+                  onClick={() => setValorStr(sugestaoFormatada)}
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-2 py-0.5 rounded-lg border border-blue-200 dark:border-blue-800 cursor-pointer transition-all active:scale-95"
+                  title={`Toque para preencher ${sugestaoFormatada}`}
+                >
+                  💡 Sugerir: R$ {sugestaoFormatada}
+                </button>
+              )}
             </div>
 
             {/* Número de Parcelas (preenchido com o valor atual) */}
