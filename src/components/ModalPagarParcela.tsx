@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { X, Check, DollarSign, Calendar, AlertCircle } from 'lucide-react';
+import { Check, DollarSign, Calendar, AlertCircle } from 'lucide-react';
 import { Parcela } from '../types';
 import { formatarMoeda, formatarData, getHojeString, dispararConfetes } from '../utils/formatters';
 import { centavosParaReais, reaisParaCentavos } from '../utils/finance';
+import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface ModalPagarParcelaProps {
   parcela: Parcela | null;
@@ -50,35 +51,27 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
-      style={{
-        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-      }}
+    <ModalBase
+      aberto={!!parcela}
+      onFechar={onFechar}
+      icone={<Check className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />}
+      titulo="Confirmar Pagamento"
+      subtitulo="Registrar quitação desta conta no SQLite"
+      asForm={true}
+      onSubmit={handleSubmit}
+      tamanhoMaximo="max-w-md"
+      rodape={
+        <ModalBotoesRodape
+          textoCancelar="Cancelar"
+          textoConfirmar="Confirmar e Quitar"
+          textoSaving="Registrando..."
+          onCancelar={onFechar}
+          salvando={salvando}
+          corConfirmar="verde"
+          iconeConfirmar={<Check className="w-4 h-4" />}
+        />
+      }
     >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <Check className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Confirmar Pagamento
-              </h3>
-              <p className="text-xs text-slate-500">
-                Registrar quitação desta conta no SQLite
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onFechar}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
         {/* Resumo da Parcela */}
         <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 space-y-2">
@@ -114,7 +107,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <div className="mt-4 space-y-4">
           {erro && (
             <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -181,26 +174,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
               </div>
             )}
           </div>
-
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onFechar}
-              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={salvando}
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-            >
-              <Check className="w-4 h-4" />
-              <span>{salvando ? 'Registrando...' : 'Confirmar e Quitar'}</span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+    </ModalBase>
   );
 };

@@ -3,6 +3,7 @@ import { X, Edit3, AlertCircle, Info, Calendar, Bell } from 'lucide-react';
 import { Categoria, Parcela } from '../types';
 import { EditarParcelaInput } from '../db/repository';
 import { parseMoedaParaCentavos } from '../utils/finance';
+import { ModalBase, ModalBotoesRodape } from './ModalBase';
 import {
   temLembrete,
   definirLembrete,
@@ -128,47 +129,35 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
-      style={{
-        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-      }}
+    <ModalBase
+      aberto={aberto}
+      onFechar={onFechar}
+      icone={<Edit3 className="w-5 h-5" />}
+      titulo="Editar Pagamento"
+      subtitulo={
+        parcela.total_parcelas > 1
+          ? `Parcela ${parcela.numero_parcela} de ${parcela.total_parcelas}`
+          : 'Conta de pagamento único'
+      }
+      asForm={true}
+      onSubmit={handleSubmit}
+      tamanhoMaximo="max-w-lg"
+      rodape={
+        <ModalBotoesRodape
+          textoCancelar="Cancelar"
+          textoConfirmar="Salvar Alterações"
+          onCancelar={onFechar}
+          salvando={salvando}
+          corConfirmar="azul"
+        />
+      }
     >
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 my-8">
-        {/* Cabeçalho */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 flex items-center justify-center">
-              <Edit3 className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Editar Pagamento
-              </h3>
-              <p className="text-xs text-slate-500">
-                {parcela.total_parcelas > 1
-                  ? `Parcela ${parcela.numero_parcela} de ${parcela.total_parcelas}`
-                  : 'Conta de pagamento único'}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onFechar}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+      {erro && (
+        <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{erro}</span>
         </div>
-
-        {/* Formulário */}
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          {erro && (
-            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{erro}</span>
-            </div>
-          )}
+      )}
 
           {/* Aviso se a parcela estiver paga */}
           {isPaga && (
@@ -389,25 +378,6 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
             </div>
           )}
 
-          {/* Ações */}
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onFechar}
-              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={salvando}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 active:scale-95 text-white font-bold text-xs shadow-md shadow-blue-900/20 disabled:opacity-50 cursor-pointer transition-all"
-            >
-              {salvando ? 'Salvando...' : 'Salvar Alterações'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    </ModalBase>
   );
 };

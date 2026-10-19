@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Tags, Plus, Edit2, Trash2, Check, X, AlertCircle } from 'lucide-react';
 import { Categoria } from '../types';
+import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface CategoriasSimplesViewProps {
   categorias: Categoria[];
@@ -146,81 +147,66 @@ export const CategoriasSimplesView: React.FC<CategoriasSimplesViewProps> = ({
       )}
 
       {/* Modal Categoria */}
-      {modalAberto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-                {editando ? 'Editar Categoria' : 'Nova Categoria'}
-              </h4>
-              <button onClick={() => setModalAberto(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <X className="w-5 h-5" />
+      <ModalBase
+        aberto={modalAberto}
+        onFechar={() => setModalAberto(false)}
+        icone={<Tags className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
+        titulo={editando ? 'Editar Categoria' : 'Nova Categoria'}
+        asForm={true}
+        onSubmit={handleSalvar}
+        tamanhoMaximo="max-w-sm"
+        rodape={
+          <ModalBotoesRodape
+            textoCancelar="Cancelar"
+            textoConfirmar={editando ? 'Salvar Categoria' : 'Criar Categoria'}
+            onCancelar={() => setModalAberto(false)}
+            salvando={salvando}
+            corConfirmar="azul"
+          />
+        }
+      >
+        {erro && (
+          <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{erro}</span>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            Nome da Categoria
+          </label>
+          <input
+            type="text"
+            required
+            placeholder="Ex: Farmácia, Viagens, Lanches..."
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+            Cor
+          </label>
+          <div className="grid grid-cols-5 gap-2">
+            {CORES_PALETA.map((c) => (
+              <button
+                type="button"
+                key={c}
+                onClick={() => setCor(c)}
+                className={`h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                  cor === c ? 'ring-2 ring-offset-2 ring-blue-600 scale-105' : ''
+                }`}
+                style={{ backgroundColor: c }}
+              >
+                {cor === c && <Check className="w-4 h-4 text-white" />}
               </button>
-            </div>
-
-            <form onSubmit={handleSalvar} className="mt-4 space-y-3">
-              {erro && (
-                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{erro}</span>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Nome da Categoria
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Farmácia, Viagens, Lanches..."
-                  value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Cor
-                </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {CORES_PALETA.map((c) => (
-                    <button
-                      type="button"
-                      key={c}
-                      onClick={() => setCor(c)}
-                      className={`h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                        cor === c ? 'ring-2 ring-offset-2 ring-blue-600 scale-105' : ''
-                      }`}
-                      style={{ backgroundColor: c }}
-                    >
-                      {cor === c && <Check className="w-4 h-4 text-white" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setModalAberto(false)}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={salvando}
-                  className="px-4 py-1.5 rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-bold text-xs disabled:opacity-50 cursor-pointer"
-                >
-                  {salvando ? 'Salvando...' : 'Salvar'}
-                </button>
-              </div>
-            </form>
+            ))}
           </div>
         </div>
-      )}
+      </ModalBase>
     </div>
   );
 };

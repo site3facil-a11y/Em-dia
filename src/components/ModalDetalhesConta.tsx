@@ -7,6 +7,7 @@ import {
   temLembrete,
   alternarLembrete,
 } from '../utils/lembretes';
+import { ModalBase } from './ModalBase';
 
 interface ModalDetalhesContaProps {
   aberto: boolean;
@@ -46,56 +47,45 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   const pct = (parcelasPagas / parcelas.length) * 100;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
-      style={{
-        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-      }}
-    >
-      <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 my-8 max-h-[90vh] flex flex-col">
-        {/* Topo */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <span
-              className="w-4 h-4 rounded-full flex-shrink-0"
-              style={{ backgroundColor: primeira.categoria_cor || '#3b82f6' }}
-            />
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                {primeira.conta_descricao}
-              </h3>
-              <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">{primeira.categoria_nome}</span>
-                <span>•</span>
-                <span>{primeira.total_parcelas > 1 ? `${primeira.total_parcelas} parcelas` : 'Pagamento único'}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleToggleLembrete}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                lembreteAtivo
-                  ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-2xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-amber-600'
-              }`}
-              title="Alternar lembrete no dia do vencimento"
-            >
-              <Bell className={`w-3.5 h-3.5 ${lembreteAtivo ? 'fill-amber-500 stroke-amber-500' : ''}`} />
-              <span>{lembreteAtivo ? 'Lembrete Ativo' : 'Ativar Lembrete'}</span>
-            </button>
-
-            <button
-              onClick={onFechar}
-              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+    <ModalBase
+      aberto={aberto}
+      onFechar={onFechar}
+      icone={
+        <span
+          className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: primeira.categoria_cor || '#3b82f6' }}
+        />
+      }
+      titulo={
+        <div className="flex items-center justify-between gap-2 w-full">
+          <span className="truncate">{primeira.conta_descricao}</span>
+          <button
+            type="button"
+            onClick={handleToggleLembrete}
+            className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer flex-shrink-0 ${
+              lembreteAtivo
+                ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-2xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-amber-600'
+            }`}
+            title="Alternar lembrete no dia do vencimento"
+          >
+            <Bell className={`w-3.5 h-3.5 ${lembreteAtivo ? 'fill-amber-500 stroke-amber-500' : ''}`} />
+            <span className="hidden sm:inline">{lembreteAtivo ? 'Lembrete Ativo' : 'Ativar Lembrete'}</span>
+          </button>
         </div>
+      }
+      subtitulo={`${primeira.categoria_nome} • ${primeira.total_parcelas > 1 ? `${primeira.total_parcelas} parcelas` : 'Pagamento único'}`}
+      tamanhoMaximo="max-w-2xl"
+      rodape={
+        <button
+          type="button"
+          onClick={onFechar}
+          className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center cursor-pointer select-none"
+        >
+          Fechar Detalhes
+        </button>
+      }
+    >
 
         {/* Resumo Financeiro da Conta */}
         <div className="py-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0 space-y-3">
@@ -213,16 +203,6 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
           })}
         </div>
 
-        {/* Rodapé */}
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end flex-shrink-0">
-          <button
-            onClick={onFechar}
-            className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200"
-          >
-            Fechar
-          </button>
-        </div>
-      </div>
-    </div>
+    </ModalBase>
   );
 };

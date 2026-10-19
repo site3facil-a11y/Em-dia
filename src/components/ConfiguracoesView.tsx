@@ -41,6 +41,7 @@ import {
 } from '../db/repository';
 import { formatarMoeda } from '../utils/formatters';
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
+import { ModalBase } from './ModalBase';
 import { compararVersoes } from '../utils/versao';
 import {
   obterContasComLembrete,
@@ -973,52 +974,27 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       </div>
 
       {/* Modal de Confirmação Segura de Restauração SQLite */}
-      {modalRestaurarAberto && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
-          style={{
-            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-          }}
-        >
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6">
-            <div className="flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Substituir Banco de Dados?
-                </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 leading-relaxed">
-                  A restauração do arquivo <strong>{nomeArquivoRestauracao}</strong> irá <strong>substituir todos os lançamentos atuais</strong> do app pelos registros deste backup.
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 font-medium">
-                  Deseja salvar uma cópia de segurança do estado atual antes de substituir?
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => handleExecutarRestauracao(true)}
-                disabled={processando}
-                className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Baixar Backup Atual e Restaurar</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExecutarRestauracao(false)}
-                disabled={processando}
-                className="w-full py-2.5 px-4 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold text-xs transition-colors cursor-pointer"
-              >
-                Substituir Sem Baixar Cópia
-              </button>
-
+      <ModalBase
+        aberto={modalRestaurarAberto}
+        onFechar={() => {
+          setModalRestaurarAberto(false);
+          setBufferRestauracao(null);
+        }}
+        icone={<AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />}
+        titulo="Substituir Banco de Dados?"
+        tamanhoMaximo="max-w-md"
+        rodape={
+          <div className="flex flex-col gap-2 w-full">
+            <button
+              type="button"
+              onClick={() => handleExecutarRestauracao(true)}
+              disabled={processando}
+              className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>Baixar Backup Atual e Restaurar</span>
+            </button>
+            <div className="flex flex-col-reverse min-[361px]:flex-row gap-2 w-full">
               <button
                 type="button"
                 onClick={() => {
@@ -1026,47 +1002,50 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                   setBufferRestauracao(null);
                 }}
                 disabled={processando}
-                className="w-full py-2 px-4 rounded-xl text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+                className="flex-1 min-h-[44px] py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Resumo da Verificação e Reparação de Parcelas (Item 4) */}
-      {modalResumoReparacaoAberto && resumoReparacao && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
-          style={{
-            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-          }}
-        >
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-                  <Wrench className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    Resultado da Reparação
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Verificação de integridade das parcelas
-                  </p>
-                </div>
-              </div>
               <button
-                onClick={() => setModalResumoReparacaoAberto(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                type="button"
+                onClick={() => handleExecutarRestauracao(false)}
+                disabled={processando}
+                className="flex-1 min-h-[44px] py-2 px-3 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold text-xs transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                Substituir Sem Baixar
               </button>
             </div>
+          </div>
+        }
+      >
+        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+          A restauração do arquivo <strong>{nomeArquivoRestauracao}</strong> irá <strong>substituir todos os lançamentos atuais</strong> do app pelos registros deste backup.
+        </p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+          Deseja salvar uma cópia de segurança do estado atual antes de substituir?
+        </p>
+      </ModalBase>
 
+      {/* Modal Resumo da Verificação e Reparação de Parcelas (Item 4) */}
+      <ModalBase
+        aberto={modalResumoReparacaoAberto && !!resumoReparacao}
+        onFechar={() => setModalResumoReparacaoAberto(false)}
+        icone={<Wrench className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />}
+        titulo="Resultado da Reparação"
+        subtitulo="Verificação de integridade das parcelas"
+        tamanhoMaximo="max-w-md"
+        rodape={
+          <button
+            type="button"
+            onClick={() => setModalResumoReparacaoAberto(false)}
+            className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer select-none"
+          >
+            Concluir
+          </button>
+        }
+      >
+        {resumoReparacao && (
+          <div className="space-y-4">
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                 <span className="text-[10px] text-slate-400 block font-bold">Verificadas</span>
@@ -1113,49 +1092,30 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 <span>Nenhuma inconsistência encontrada. Todas as contas possuem o número correto de parcelas!</span>
               </div>
             )}
-
-            <button
-              onClick={() => setModalResumoReparacaoAberto(false)}
-              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Concluir
-            </button>
           </div>
-        </div>
-      )}
+        )}
+      </ModalBase>
 
       {/* Modal Resumo do Recálculo de Totais das Contas (Item 4) */}
-      {modalResumoRecalculoAberto && resumoRecalculo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
-          style={{
-            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-          }}
-        >
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-                  <Calculator className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    Recálculo de Totais
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Sincronização com a soma real das parcelas
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setModalResumoRecalculoAberto(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
+      <ModalBase
+        aberto={modalResumoRecalculoAberto && !!resumoRecalculo}
+        onFechar={() => setModalResumoRecalculoAberto(false)}
+        icone={<Calculator className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
+        titulo="Recálculo de Totais"
+        subtitulo="Sincronização com a soma real das parcelas"
+        tamanhoMaximo="max-w-md"
+        rodape={
+          <button
+            type="button"
+            onClick={() => setModalResumoRecalculoAberto(false)}
+            className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer select-none"
+          >
+            Concluir
+          </button>
+        }
+      >
+        {resumoRecalculo && (
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 text-center">
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                 <span className="text-[10px] text-slate-400 block font-bold">Contas Verificadas</span>
@@ -1196,117 +1156,87 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 <span>Todos os totais das contas já estavam perfeitamente calculados e sincronizados!</span>
               </div>
             )}
-
-            <button
-              onClick={() => setModalResumoRecalculoAberto(false)}
-              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Concluir
-            </button>
           </div>
-        </div>
-      )}
+        )}
+      </ModalBase>
 
       {/* Modal de Escolha de Destino de Backup SQLite */}
-      {modalDestinoBackupAberto && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200"
-          style={{
-            paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-          }}
-        >
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
-                  <HardDrive className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                    Salvar Backup SQLite
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Onde você deseja salvar seu arquivo de backup?
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setModalDestinoBackupAberto(false)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      <ModalBase
+        aberto={modalDestinoBackupAberto}
+        onFechar={() => setModalDestinoBackupAberto(false)}
+        icone={<HardDrive className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
+        titulo="Salvar Backup SQLite"
+        subtitulo="Onde você deseja salvar seu arquivo de backup?"
+        tamanhoMaximo="max-w-md"
+        rodape={
+          <button
+            type="button"
+            onClick={() => setModalDestinoBackupAberto(false)}
+            className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer select-none"
+          >
+            Cancelar
+          </button>
+        }
+      >
+        <div className="space-y-2.5">
+          {/* Opção 1: Salvar no Celular (Pasta Documentos) */}
+          <button
+            onClick={() => handleExecutarBackupSqlite('documentos')}
+            disabled={processando}
+            className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+              <FolderDown className="w-5 h-5" />
             </div>
-
-            <div className="space-y-2.5">
-              {/* Opção 1: Salvar no Celular (Pasta Documentos) */}
-              <button
-                onClick={() => handleExecutarBackupSqlite('documentos')}
-                disabled={processando}
-                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
-              >
-                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-                  <FolderDown className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                    Salvar no Celular (Pasta Documentos)
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-                    Grava o arquivo diretamente no armazenamento do seu aparelho
-                  </p>
-                </div>
-              </button>
-
-              {/* Opção 2: Salvar no Google Drive */}
-              <button
-                onClick={() => handleExecutarBackupSqlite('drive')}
-                disabled={processando}
-                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500 dark:hover:border-emerald-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
-              >
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-                  <Cloud className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                    Salvar no Google Drive
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-                    Envia o arquivo diretamente para sua conta do Google Drive
-                  </p>
-                </div>
-              </button>
-
-              {/* Opção 3: Enviar por E-mail */}
-              <button
-                onClick={() => handleExecutarBackupSqlite('email')}
-                disabled={processando}
-                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
-              >
-                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-                  <Mail className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
-                    Enviar para o E-mail
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
-                    Abre seu aplicativo de e-mail (Gmail/Outlook) com o backup anexado
-                  </p>
-                </div>
-              </button>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                Salvar no Celular (Pasta Documentos)
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                Grava o arquivo diretamente no armazenamento do seu aparelho
+              </p>
             </div>
+          </button>
 
-            <button
-              onClick={() => setModalDestinoBackupAberto(false)}
-              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
-            >
-              Cancelar
-            </button>
-          </div>
+          {/* Opção 2: Salvar no Google Drive */}
+          <button
+            onClick={() => handleExecutarBackupSqlite('drive')}
+            disabled={processando}
+            className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-emerald-500 dark:hover:border-emerald-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+          >
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+              <Cloud className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                Salvar no Google Drive
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                Envia o arquivo diretamente para sua conta do Google Drive
+              </p>
+            </div>
+          </button>
+
+          {/* Opção 3: Enviar por E-mail */}
+          <button
+            onClick={() => handleExecutarBackupSqlite('email')}
+            disabled={processando}
+            className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 bg-slate-50/50 dark:bg-slate-850 hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-all flex items-center gap-3.5 group cursor-pointer"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                Enviar para o E-mail
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug">
+                Abre seu aplicativo de e-mail (Gmail/Outlook) com o backup anexado
+              </p>
+            </div>
+          </button>
         </div>
-      )}
+      </ModalBase>
 
       {/* Modal de Atualização do GitHub */}
       <ModalAtualizacao

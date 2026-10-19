@@ -1,7 +1,8 @@
 import React from 'react';
-import { Bell, AlertCircle, Check, X, Calendar } from 'lucide-react';
+import { Bell, AlertCircle, Check, Calendar } from 'lucide-react';
 import { Parcela } from '../types';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
+import { ModalBase } from './ModalBase';
 
 interface ModalLembretesHojeProps {
   aberto: boolean;
@@ -23,37 +24,23 @@ export const ModalLembretesHoje: React.FC<ModalLembretesHojeProps> = ({
   const atrasadas = parcelasLembrete.filter((p) => p.data_vencimento < hoje);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200"
-      style={{
-        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 24px)',
-        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), 16px)',
-      }}
-    >
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 relative max-h-[85vh] flex flex-col">
-        {/* Botão Fechar */}
+    <ModalBase
+      aberto={aberto}
+      onFechar={onFechar}
+      icone={<Bell className="w-5 h-5 text-amber-600 dark:text-amber-400" />}
+      titulo="Lembretes do Em Dia"
+      subtitulo="Resumo complementar de contas vencendo hoje ou atrasadas"
+      tamanhoMaximo="max-w-md"
+      rodape={
         <button
+          type="button"
           onClick={onFechar}
-          className="absolute top-5 right-5 p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-          aria-label="Fechar lembretes"
+          className="w-full min-h-[48px] py-2.5 px-4 rounded-2xl bg-slate-900 text-white dark:bg-slate-800 dark:text-slate-100 font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer select-none"
         >
-          <X className="w-5 h-5" />
+          Entendi
         </button>
-
-        {/* Cabeçalho */}
-        <div className="flex items-start gap-3 pb-4 border-b border-slate-100 dark:border-slate-800 flex-shrink-0 pr-8">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center shadow-md shadow-amber-500/20 flex-shrink-0">
-            <Bell className="w-5 h-5 fill-white" />
-          </div>
-          <div>
-            <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-              Lembretes do Em Dia
-            </h3>
-            <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-              Resumo complementar de contas vencendo hoje ou atrasadas.
-            </p>
-          </div>
-        </div>
+      }
+    >
 
         {/* Lista com Rolagem */}
         <div className="mt-4 space-y-3 overflow-y-auto flex-1 pr-1">
@@ -127,16 +114,6 @@ export const ModalLembretesHoje: React.FC<ModalLembretesHojeProps> = ({
           )}
         </div>
 
-        {/* Rodapé */}
-        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-          <button
-            onClick={onFechar}
-            className="w-full py-2.5 px-4 rounded-xl bg-slate-900 text-white dark:bg-slate-800 dark:text-slate-100 font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            Entendi
-          </button>
-        </div>
-      </div>
-    </div>
+    </ModalBase>
   );
 };
