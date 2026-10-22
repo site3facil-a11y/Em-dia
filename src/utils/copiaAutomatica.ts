@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { getDb, persistirDbImediato } from '../db/sqlite';
 import { uint8ArrayToBase64, base64ToArrayBuffer } from './fileExport';
@@ -15,6 +16,10 @@ export interface InfoCopiaAutomatica {
  * mantendo apenas as 3 últimas cópias gravadas.
  */
 export async function salvarCopiaSegurancaSilenciosa(): Promise<string> {
+  if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable('Filesystem')) {
+    return '';
+  }
+
   // Garante que o banco em memória está gravado no IndexedDB
   await persistirDbImediato();
   const db = await getDb();
@@ -67,6 +72,9 @@ export async function executarCopiaAutomaticaSemanalSeNecessario(): Promise<bool
  * Remove cópias antigas em Directory.Data além das 3 mais recentes
  */
 async function limparCopiasExcedentes(): Promise<void> {
+  if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable('Filesystem')) {
+    return;
+  }
   try {
     const dirResult = await Filesystem.readdir({
       path: '',

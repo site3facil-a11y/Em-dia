@@ -469,7 +469,22 @@ export function recriarCategoriasPadrao(db: Database) {
 }
 
 /**
- * Obtém a instância do banco SQLite com tratamentos de erro isolados por etapa
+ * Vigia de tempo para etapas críticas de inicialização (Item 5)
+ */
+export function comTimeout<T>(promessa: Promise<T>, ms: number, nomeEtapa: string): Promise<T> {
+  let timerId: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = setTimeout(() => {
+      reject(new DatabaseInitError(nomeEtapa, new Error(`Tempo limite de ${ms / 1000}s excedido na etapa: ${nomeEtapa}`)));
+    }, ms);
+  });
+  return Promise.race([promessa, timeoutPromise]).finally(() => {
+    clearTimeout(timerId);
+  });
+}
+
+/**
+ * Obtém a instância do banco SQLite com tratamentos de erro e vigia de tempo isolados por etapa (Item 5)
  */
 export async function getDb(): Promise<Database> {
   if (dbInstance) {
@@ -481,96 +496,84 @@ export async function getDb(): Promise<Database> {
   }
 
   initPromise = (async () => {
-    // ETAPA 1: Carregar o WASM do sql.js
+    // ETAPA 1: Carregar o WASM do sql.js (Vigia de tempo: 15s)
     let SQL: any;
     try {
-      SQL = await initSqlJs({
-        locateFile: (file: string) => {
-          if (file.endsWith('.wasm')) {
-            // Tenta servir o arquivo estático da pasta public ou URL empacotada
-            return '/sql-wasm.wasm';
+      SQL = await comTimeout(
+        (async () => {
+          try {
+            return await initSqlJs({
+              locateFile: (file: string) => {
+                if (file.endsWith('.wasm')) {
+                  return '/sql-wasm.wasm';
+                }
+                return file;
+              },
+            });
+          } catch {
+            return await initSqlJs({
+              locateFile: (file: string) => {
+                if (file.endsWith('.wasm') && typeof sqlWasmUrl === 'string') {
+                  return sqlWasmUrl;
+                }
+                return file;
+              },
+            });
           }
-          return file;
-        },
-      });
-    } catch {
-      // Fallback para URL empacotada do Vite
-      try {
-        SQL = await initSqlJs({
-          locateFile: (file: string) => {
-            if (file.endsWith('.wasm') && typeof sqlWasmUrl === 'string') {
-              return sqlWasmUrl;
-            }
-            return file;
-          },
-        });
-      } catch (err: any) {
-        throw new DatabaseInitError('carregar o WASM do sql.js', err);
-      }
-    }
-
-    // ETAPA 2: Abrir o arquivo salvo no IndexedDB
-    let savedData: Uint8Array | null = null;
-    try {
-      savedData = await carregarDoIndexedDB();
+        })(),
+        15000,
+        'WASM (sql.js)'
+      );
     } catch (err: any) {
-      throw new DatabaseInitError('abrir o arquivo salvo (leitura)', err);
+      throw err instanceof DatabaseInitError ? err : new DatabaseInitError('WASM (sql.js)', err);
     }
 
+    // ETAPA 2: Abrir o arquivo salvo no IndexedDB (Vigia de tempo: 10s)
     let db: Database;
     try {
-      if (savedData && savedData.length > 0) {
-        db = new SQL.Database(savedData);
-      } else {
-        db = new SQL.Database();
-      }
+      db = await comTimeout(
+        (async () => {
+          let savedData: Uint8Array | null = null;
+          try {
+            savedData = await carregarDoIndexedDB();
+          } catch (err: any) {
+            console.warn('Aviso ao carregar dados do IndexedDB:', err);
+          }
+
+          if (savedData && savedData.length > 0) {
+            try {
+              await salvarBackupPreMigracao(savedData);
+            } catch (err) {
+              console.warn('Aviso: falha ao salvar backup pré-migração:', err);
+            }
+            return new SQL.Database(savedData);
+          } else {
+            return new SQL.Database();
+          }
+        })(),
+        10000,
+        'Abrir banco'
+      );
     } catch (err: any) {
-      throw new DatabaseInitError('abrir o arquivo salvo (instanciação SQLite)', err);
+      throw err instanceof DatabaseInitError ? err : new DatabaseInitError('Abrir banco', err);
     }
 
-    // ETAPA 3: Backup pré-migração
-    if (savedData && savedData.length > 0) {
-      try {
-        await salvarBackupPreMigracao(savedData);
-      } catch (err) {
-        console.warn('Aviso: falha ao salvar backup pré-migração:', err);
-      }
-    }
-
-    // ETAPA 4: Migrações seguras
+    // ETAPA 3: Executar migrações do schema e estrutura base (Vigia de tempo: 20s)
     try {
-      executarMigracoes(db);
-      recriarCategoriasPadrao(db);
+      await comTimeout(
+        (async () => {
+          executarMigracoes(db);
+          recriarCategoriasPadrao(db);
+          db.run('PRAGMA foreign_keys = ON;');
+        })(),
+        20000,
+        'Migrações'
+      );
     } catch (err: any) {
-      throw new DatabaseInitError('migração do schema', err);
+      throw err instanceof DatabaseInitError ? err : new DatabaseInitError('Migrações', err);
     }
 
-    // ETAPA 5: Ativar PRAGMA foreign_keys = ON
-    try {
-      db.run('PRAGMA foreign_keys = ON;');
-    } catch (err: any) {
-      throw new DatabaseInitError('PRAGMA foreign_keys', err);
-    }
-
-    // ETAPA 6: Inicialização se banco vazio (apenas categorias padrão, sem lançamentos ou contas de exemplo)
-    try {
-      recriarCategoriasPadrao(db);
-    } catch (err: any) {
-      console.warn('Aviso ao inicializar categorias padrão:', err);
-    }
-
-    // ETAPA 6.5: Reparo idempotente de totais de contas (sincroniza contas.valor_total com soma real das parcelas)
-    try {
-      db.run(`
-        UPDATE contas 
-        SET valor_total = (SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = contas.id)
-        WHERE EXISTS (SELECT 1 FROM parcelas p WHERE p.conta_id = contas.id);
-      `);
-    } catch (err) {
-      console.warn('Aviso ao recalcular totais de contas na inicialização:', err);
-    }
-
-    // ETAPA 7: Persistência inicial
+    // Persistência inicial
     try {
       const exported = db.export();
       await salvarNoIndexedDB(exported);

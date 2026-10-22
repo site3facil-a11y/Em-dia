@@ -319,6 +319,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
               checksum: jsonPages.checksum ? String(jsonPages.checksum) : undefined,
               size: typeof jsonPages.size === 'number' ? jsonPages.size : undefined,
               notes: jsonPages.notes ? String(jsonPages.notes) : undefined,
+              nativeBuild: typeof jsonPages.nativeBuild === 'number' ? jsonPages.nativeBuild : undefined,
               nomeArquivo: jsonPages.url.split('/').pop()?.split('?')[0] || 'dist.zip',
               tag_name: String(jsonPages.version),
               name: `Versão ${jsonPages.version}`,
@@ -387,6 +388,17 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       const tag = dadosAtualizacao.version;
       const comparacao = compararVersoes(tag, __APP_VERSION__);
       if (comparacao > 0) {
+        // Item 6: se o nativeBuild do release for MAIOR que o do app instalado, não baixe;
+        // mostre "Esta atualização exige instalar o APK mais recente" e a versão necessária. Se for igual, ofereça normalmente
+        const appNativeBuild = typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3;
+        const releaseNativeBuild = dadosAtualizacao.nativeBuild;
+        if (typeof releaseNativeBuild === 'number' && releaseNativeBuild > appNativeBuild) {
+          setErro(`Esta atualização exige instalar o APK mais recente (versão ${tag}, build nativo ${releaseNativeBuild}). A versão atual possui build nativo ${appNativeBuild}.`);
+          setReleaseEncontrada(dadosAtualizacao);
+          setModalAtualizacaoAberto(true);
+          return;
+        }
+
         setReleaseEncontrada(dadosAtualizacao);
         setModalAtualizacaoAberto(true);
       } else {
@@ -628,7 +640,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 Lembretes de vencimento
               </h4>
               <p className="text-xs font-bold text-amber-600 dark:text-amber-400 mt-0.5">
-                Notificações exigem o app mais recente
+                Recurso exige o app mais recente
               </p>
             </div>
           </div>

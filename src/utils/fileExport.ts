@@ -65,6 +65,22 @@ export function downloadNavegador(fileName: string, data: Uint8Array | string, m
   URL.revokeObjectURL(blobUrl);
 }
 
+export function isFilesystemDisponivel(): boolean {
+  try {
+    return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Filesystem');
+  } catch {
+    return false;
+  }
+}
+
+export function isShareDisponivel(): boolean {
+  try {
+    return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('Share');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Salva o arquivo diretamente no armazenamento do aparelho (Pasta Documentos).
  * No app nativo (Android/iOS): grava em Directory.Documents sem precisar de app intermediário.
@@ -79,30 +95,34 @@ export async function salvarArquivoNoDispositivo({
   data: Uint8Array | string;
   mimeType?: string;
 }): Promise<{ path: string; fileName: string }> {
-  if (Capacitor.isNativePlatform()) {
+  if (isFilesystemDisponivel()) {
     try {
-      const perm = await Filesystem.checkPermissions();
-      if (perm.publicStorage !== 'granted') {
-        await Filesystem.requestPermissions();
+      try {
+        const perm = await Filesystem.checkPermissions();
+        if (perm.publicStorage !== 'granted') {
+          await Filesystem.requestPermissions();
+        }
+      } catch {
+        // Ignora erro de checagem se permissões não forem suportadas diretamente
       }
-    } catch {
-      // Ignora erro de checagem se permissões não forem suportadas diretamente
+
+      const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
+
+      const result = await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Documents,
+        recursive: true,
+      });
+
+      return { path: result.uri, fileName };
+    } catch (err) {
+      console.warn('Aviso: Falha ao gravar no Filesystem nativo, usando download navegador:', err);
     }
-
-    const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
-
-    const result = await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: Directory.Documents,
-      recursive: true,
-    });
-
-    return { path: result.uri, fileName };
-  } else {
-    downloadNavegador(fileName, data, mimeType);
-    return { path: fileName, fileName };
   }
+
+  downloadNavegador(fileName, data, mimeType);
+  return { path: fileName, fileName };
 }
 
 /**
@@ -121,28 +141,33 @@ export async function salvarNoGoogleDrive({
   mimeType?: string;
   title?: string;
 }): Promise<void> {
-  if (Capacitor.isNativePlatform()) {
-    const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
+  if (isFilesystemDisponivel() && isShareDisponivel()) {
+    try {
+      const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
 
-    await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: Directory.Cache,
-    });
+      await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Cache,
+      });
 
-    const uriResult = await Filesystem.getUri({
-      path: fileName,
-      directory: Directory.Cache,
-    });
+      const uriResult = await Filesystem.getUri({
+        path: fileName,
+        directory: Directory.Cache,
+      });
 
-    await Share.share({
-      title: title || fileName,
-      files: [uriResult.uri],
-      dialogTitle: 'Salvar no Google Drive',
-    });
-  } else {
-    downloadNavegador(fileName, data, mimeType);
+      await Share.share({
+        title: title || fileName,
+        files: [uriResult.uri],
+        dialogTitle: 'Salvar no Google Drive',
+      });
+      return;
+    } catch (err) {
+      console.warn('Aviso: Falha ao compartilhar com Google Drive via Share nativo:', err);
+    }
   }
+
+  downloadNavegador(fileName, data, mimeType);
 }
 
 /**
@@ -163,29 +188,34 @@ export async function enviarPorEmail({
   assunto?: string;
   corpo?: string;
 }): Promise<void> {
-  if (Capacitor.isNativePlatform()) {
-    const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
+  if (isFilesystemDisponivel() && isShareDisponivel()) {
+    try {
+      const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
 
-    await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: Directory.Cache,
-    });
+      await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Cache,
+      });
 
-    const uriResult = await Filesystem.getUri({
-      path: fileName,
-      directory: Directory.Cache,
-    });
+      const uriResult = await Filesystem.getUri({
+        path: fileName,
+        directory: Directory.Cache,
+      });
 
-    await Share.share({
-      title: assunto || `Backup Em Dia - ${fileName}`,
-      text: corpo || 'Segue em anexo o arquivo de backup do aplicativo Em Dia (.sqlite).',
-      files: [uriResult.uri],
-      dialogTitle: 'Enviar backup por e-mail',
-    });
-  } else {
-    downloadNavegador(fileName, data, mimeType);
+      await Share.share({
+        title: assunto || `Backup Em Dia - ${fileName}`,
+        text: corpo || 'Segue em anexo o arquivo de backup do aplicativo Em Dia (.sqlite).',
+        files: [uriResult.uri],
+        dialogTitle: 'Enviar backup por e-mail',
+      });
+      return;
+    } catch (err) {
+      console.warn('Aviso: Falha ao enviar por e-mail via Share nativo:', err);
+    }
   }
+
+  downloadNavegador(fileName, data, mimeType);
 }
 
 /**
@@ -199,29 +229,33 @@ export async function exportarOuCompartilharArquivo({
   dialogTitle = 'Salvar backup',
   title,
 }: OpcoesExportarArquivo): Promise<{ fileName: string }> {
-  if (Capacitor.isNativePlatform()) {
-    const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
+  if (isFilesystemDisponivel() && isShareDisponivel()) {
+    try {
+      const base64Data = typeof data === 'string' ? stringToBase64(data) : uint8ArrayToBase64(data);
 
-    await Filesystem.writeFile({
-      path: fileName,
-      data: base64Data,
-      directory: Directory.Cache,
-    });
+      await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Cache,
+      });
 
-    const uriResult = await Filesystem.getUri({
-      path: fileName,
-      directory: Directory.Cache,
-    });
+      const uriResult = await Filesystem.getUri({
+        path: fileName,
+        directory: Directory.Cache,
+      });
 
-    await Share.share({
-      title: title || fileName,
-      files: [uriResult.uri],
-      dialogTitle: dialogTitle || 'Salvar backup',
-    });
+      await Share.share({
+        title: title || fileName,
+        files: [uriResult.uri],
+        dialogTitle: dialogTitle || 'Salvar backup',
+      });
 
-    return { fileName };
-  } else {
-    downloadNavegador(fileName, data, mimeType);
-    return { fileName };
+      return { fileName };
+    } catch (err) {
+      console.warn('Aviso: Falha ao compartilhar via Share nativo:', err);
+    }
   }
+
+  downloadNavegador(fileName, data, mimeType);
+  return { fileName };
 }

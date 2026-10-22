@@ -11,6 +11,7 @@ export default defineConfig(() => {
     base: './',
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
+      __NATIVE_BUILD__: JSON.stringify(pkg.nativeBuild || 3),
     },
     plugins: [
       react(),

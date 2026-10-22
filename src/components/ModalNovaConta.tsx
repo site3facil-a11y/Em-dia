@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, PlusCircle, AlertCircle, Calendar, Layers, Repeat, Bell } from 'lucide-react';
 import { Categoria, TipoConta } from '../types';
 import { NovaContaInput } from '../db/repository';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
 import { parseMoedaParaCentavos } from '../utils/finance';
-import { definirLembrete, solicitarPermissaoNotificacao, verificarPermissaoNotificacao } from '../utils/lembretes';
+import { definirLembrete } from '../utils/lembretes';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface ModalNovaContaProps {
@@ -20,26 +20,53 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   categorias,
   onSalvar,
 }) => {
+  const categoriaPadraoId = categorias[0]?.id || 1;
+
   const [descricao, setDescricao] = useState('');
   const [valorTotalStr, setValorTotalStr] = useState('');
   const [tipo, setTipo] = useState<TipoConta>('unica');
   const [numeroParcelas, setNumeroParcelas] = useState<string>('');
   const [frequencia, setFrequencia] = useState<'mensal' | 'anual' | 'semanal' | 'quinzenal'>('mensal');
   const [dataVencimento, setDataVencimento] = useState(getHojeString());
+  const [categoriaId, setCategoriaId] = useState<number>(categoriaPadraoId);
+  const [formaPagamento, setFormaPagamento] = useState('Geral');
   const [lembreteAtivo, setLembreteAtivo] = useState(false);
   const [observacoes, setObservacoes] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [campoParcelasInvalido, setCampoParcelasInvalido] = useState(false);
   const [salvando, setSalvando] = useState(false);
 
+  // Reinicia todos os campos para o estado limpo inicial (Item 2)
+  const resetForm = useCallback(() => {
+    setDescricao('');
+    setValorTotalStr('');
+    setTipo('unica');
+    setNumeroParcelas('');
+    setFrequencia('mensal');
+    setDataVencimento(getHojeString());
+    setCategoriaId(categorias[0]?.id || 1);
+    setFormaPagamento('Geral');
+    setLembreteAtivo(false);
+    setObservacoes('');
+    setErro(null);
+    setCampoParcelasInvalido(false);
+    setSalvando(false);
+  }, [categorias]);
+
+  // Garante que toda vez que abrir, os campos comecem limpos (Item 2)
+  useEffect(() => {
+    if (aberto) {
+      resetForm();
+    }
+  }, [aberto, resetForm]);
+
+  const handleFecharModal = useCallback(() => {
+    resetForm();
+    onFechar();
+  }, [resetForm, onFechar]);
+
   if (!aberto) return null;
 
-  // Busca a categoria 'Gastos' (todas as contas normais são gastos; apenas o porquinho é economia)
-  const catGastos =
-    categorias.find((c) => c.nome.toLowerCase() === 'gastos') ||
-    categorias.find((c) => !c.nome.toLowerCase().includes('economia') && !c.nome.toLowerCase().includes('reserva')) ||
-    categorias[0];
-  const categoriaFinalId = catGastos?.id || 1;
   const valorDigitadoCentavos = parseMoedaParaCentavos(valorTotalStr);
   const parcelasNum = parseInt(String(numeroParcelas).trim(), 10) || 0;
 
@@ -105,10 +132,10 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
       setErro(null);
       const novoId = await onSalvar({
         descricao: descricao.trim(),
-        categoria_id: categoriaFinalId,
+        categoria_id: categoriaId || categoriaPadraoId,
         valor_total: valorTotalCentavos / 100,
         tipo,
-        forma_pagamento: 'Geral',
+        forma_pagamento: formaPagamento.trim() || 'Geral',
         observacoes: observacoes.trim() || undefined,
         data_primeiro_vencimento: dataVencimento,
         numero_parcelas: tipo === 'parcelada' ? parcelasNum : (tipo === 'recorrente' ? (frequencia === 'anual' ? 5 : 12) : 1),
@@ -120,6 +147,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
         definirLembrete(novoId, true);
       }
 
+      resetForm();
       onFechar();
     } catch (err: any) {
       setErro(err?.message || 'Falha ao gravar conta no SQLite.');
@@ -131,7 +159,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   return (
     <ModalBase
       aberto={aberto}
-      onFechar={onFechar}
+      onFechar={handleFecharModal}
       icone={<PlusCircle className="w-5 h-5" />}
       titulo="Cadastrar Novo Pagamento"
       subtitulo="Preencha os dados da conta a pagar"
@@ -143,7 +171,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
           textoCancelar="Cancelar"
           textoConfirmar="Criar Pagamento"
           textoSaving="Gravando..."
-          onCancelar={onFechar}
+          onCancelar={handleFecharModal}
           salvando={salvando}
           corConfirmar="azul"
         />

@@ -35,21 +35,15 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
   const [executandoAcao, setExecutandoAcao] = useState(false);
   const [msgSucesso, setMsgSucesso] = useState<string | null>(null);
 
-  // Garante que SplashScreen.hide() e notifyAppReady() sejam chamados imediatamente
-  const garantirAppLiberado = useCallback(() => {
+  // Garante que SplashScreen nativa seja liberada com segurança (Item 3)
+  // NOTA (Item 1): CapacitorUpdater.notifyAppReady() NUNCA é chamado aqui.
+  const esconderSplashNativa = useCallback(() => {
     try {
-      if (Capacitor.isNativePlatform()) {
+      if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SplashScreen')) {
         NativeSplashScreen.hide().catch((err) => {
           console.warn('NativeSplashScreen.hide aviso:', err);
         });
       }
-    } catch {
-      // Ignora erro
-    }
-    try {
-      CapacitorUpdater.notifyAppReady().catch((err) => {
-        console.warn('CapacitorUpdater.notifyAppReady aviso:', err);
-      });
     } catch {
       // Ignora erro
     }
@@ -68,10 +62,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
     }
   }, []);
 
-  // Libera telas nativas logo na montagem
+  // Libera tela nativa logo na montagem
   useEffect(() => {
-    garantirAppLiberado();
-  }, [garantirAppLiberado]);
+    esconderSplashNativa();
+  }, [esconderSplashNativa]);
 
   // Aciona animação suave de entrada
   useEffect(() => {
@@ -93,7 +87,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
     const inicio = Date.now();
 
     try {
-      // Executa o carregamento com etapas isoladas e migrações seguras
+      // Executa o carregamento com etapas isoladas e vigia de tempo por etapa (Item 5)
       await getDb();
 
       // Sucesso: calcula tempo decorrido para evitar flash
@@ -109,11 +103,11 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
       }, tempoRestante);
     } catch (err: any) {
       console.error('Erro na inicialização do banco SQLite:', err);
-      // Garante novamente a liberação nativa mesmo em caso de falha
-      garantirAppLiberado();
+      esconderSplashNativa();
 
       setCarregando(false);
-      const mensagem = err?.message || 'Falha ao inicializar o banco de dados.';
+      const etapa = err?.etapa ? `[Etapa: ${err.etapa}] ` : '';
+      const mensagem = `${etapa}${err?.message || 'Falha ao inicializar o banco de dados.'}`;
       setErro(mensagem);
 
       // Extrai as primeiras linhas do stack trace para diagnóstico
@@ -125,7 +119,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
         setErroStack(null);
       }
     }
-  }, [garantirAppLiberado, onPronto]);
+  }, [esconderSplashNativa, onPronto]);
 
   useEffect(() => {
     inicializarBanco();
@@ -152,6 +146,27 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
       alert('Não foi possível exportar: ' + (expErr?.message || 'Arquivo não encontrado.'));
     } finally {
       setExecutandoAcao(false);
+    }
+  };
+
+  // Voltar à versão original do app instalada pelo APK (Item 5)
+  const handleVoltarVersaoOriginal = async () => {
+    try {
+      setExecutandoAcao(true);
+      try {
+        localStorage.setItem('init_falhas', '0');
+        localStorage.setItem('ultima_atualizacao_falhou', 'true');
+      } catch {}
+
+      if (Capacitor.isPluginAvailable('CapacitorUpdater')) {
+        await CapacitorUpdater.reset().catch((e) => {
+          console.warn('Aviso ao resetar CapacitorUpdater:', e);
+        });
+      }
+    } catch (e) {
+      console.warn('Erro ao voltar à versão original do app:', e);
+    } finally {
+      window.location.reload();
     }
   };
 
@@ -304,41 +319,43 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
                 </div>
               </div>
             ) : (
-              /* Três Botões de Ação para Recuperação sem Perder Dados */
-              <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                {/* 1. Tentar Novamente */}
-                <button
-                  type="button"
-                  disabled={executandoAcao}
-                  onClick={() => inicializarBanco()}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white text-blue-950 font-bold text-xs shadow-md hover:bg-slate-100 active:scale-95 transition-all cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-blue-950" />
-                  <span>Tentar novamente</span>
-                </button>
+              /* Três Botões de Ação para Recuperação Conforme Especificação (Item 5) */
+              <div className="space-y-2 pt-1">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  {/* 1. Tentar Novamente */}
+                  <button
+                    type="button"
+                    disabled={executandoAcao}
+                    onClick={() => inicializarBanco()}
+                    className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white text-blue-950 font-bold text-xs shadow-md hover:bg-slate-100 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-blue-950" />
+                    <span>Tentar novamente</span>
+                  </button>
 
-                {/* 2. Exportar banco atual (.sqlite) */}
-                <button
-                  type="button"
-                  disabled={executandoAcao}
-                  onClick={handleExportarRecuperacao}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
-                  title="Baixa cópia do banco para não perder os dados"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Exportar .sqlite</span>
-                </button>
+                  {/* 2. Exportar banco atual (.sqlite) */}
+                  <button
+                    type="button"
+                    disabled={executandoAcao}
+                    onClick={handleExportarRecuperacao}
+                    className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                    title="Baixa cópia do banco para não perder os dados"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Exportar banco atual (.sqlite)</span>
+                  </button>
+                </div>
 
-                {/* 3. Recriar banco do zero */}
+                {/* 3. Voltar à versão original do app (CapacitorUpdater.reset e recarregar) */}
                 <button
                   type="button"
                   disabled={executandoAcao}
-                  onClick={() => setConfirmandoReset(true)}
-                  className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 active:scale-95 text-rose-200 font-semibold text-xs transition-all cursor-pointer"
-                  title="Apaga os dados corrompidos e recria o banco limpo"
+                  onClick={handleVoltarVersaoOriginal}
+                  className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/25 hover:bg-amber-500/35 border border-amber-400/40 active:scale-95 text-amber-200 font-bold text-xs transition-all cursor-pointer"
+                  title="Restaura a versão original embutida no APK e recarrega"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Recriar do zero</span>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Voltar à versão original do app</span>
                 </button>
               </div>
             )}

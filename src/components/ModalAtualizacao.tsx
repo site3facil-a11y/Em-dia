@@ -23,6 +23,7 @@ export interface ReleaseInfo {
   size?: number;
   notes?: string;
   nomeArquivo?: string;
+  nativeBuild?: number;
   // Campos legados para compatibilidade com a API de Releases do GitHub
   tag_name?: string;
   name?: string;
@@ -67,13 +68,30 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
   release,
   versaoAtual,
 }) => {
-  const [atualizando, setAtualizando] = useState(false);
+  const appNativeBuild = typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3;
+  const releaseNativeBuild = typeof release?.nativeBuild === 'number' ? release.nativeBuild : undefined;
+  const exigeNovoApk = Boolean(releaseNativeBuild && releaseNativeBuild > appNativeBuild);
+
+  // Verifica se a atualização anterior falhou (Item 7)
+  const [falhaAnterior] = useState<boolean>(() => {
+    try {
+      const falhasStr = localStorage.getItem('init_falhas') || '0';
+      const falhas = parseInt(falhasStr, 10) || 0;
+      return falhas > 0 || localStorage.getItem('ultima_atualizacao_falhou') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [etapa, setEtapa] = useState<'pronto_download' | 'baixando' | 'baixado' | 'aplicando' | 'concluido'>('pronto_download');
+  const [bundleBaixado, setBundleBaixado] = useState<any | null>(null);
   const [progresso, setProgresso] = useState<number>(0);
   const [statusTexto, setStatusTexto] = useState<string>('');
   const [erro, setErro] = useState<string | null>(null);
   const [diagnostico, setDiagnostico] = useState<DiagnosticoErro | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [avisoNaoNativo, setAvisoNaoNativo] = useState(false);
+  const atualizando = etapa === 'baixando' || etapa === 'aplicando' || etapa === 'concluido';
 
   if (!aberto || !release) return null;
 
@@ -131,6 +149,12 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
     setDiagnostico(null);
     setAvisoNaoNativo(false);
 
+    // Se o release exige APK mais recente devido a incompatibilidade de build nativo (Item 6)
+    if (exigeNovoApk) {
+      setErro(`Esta atualização exige instalar o APK mais recente (Build ${releaseNativeBuild}).`);
+      return;
+    }
+
     // Se Capacitor.isNativePlatform() for falso, aviso específico
     if (!Capacitor.isNativePlatform()) {
       setAvisoNaoNativo(true);
@@ -177,7 +201,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
     }
 
     try {
-      setAtualizando(true);
+      setEtapa('baixando');
       setStatusTexto('Criando cópia de segurança do banco...');
       setProgresso(10);
 
@@ -337,18 +361,18 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
         throw ultimoErro;
       }
 
-      // Só chame set() depois do evento downloadComplete
-      setProgresso(98);
-      setStatusTexto('Aplicando atualização...');
-      await CapacitorUpdater.set(finalBundle);
+      // Item 7: Aplicação em duas etapas:
+      // Depois do download, mostre "Atualização baixada. Toque em Aplicar", e só então chame set().
+      setBundleBaixado(finalBundle);
+      setEtapa('baixado');
       setProgresso(100);
-      setStatusTexto('Atualização concluída com sucesso!');
+      setStatusTexto('Atualização baixada. Toque em Aplicar');
     } catch (err: any) {
-      console.error('Erro durante atualização:', err);
-      setAtualizando(false);
+      console.error('Erro durante download da atualização:', err);
+      setEtapa('pronto_download');
       setProgresso(0);
 
-      const msgPrincipal = err?.message || 'Falha ao baixar e aplicar a atualização. Verifique sua conexão e tente novamente.';
+      const msgPrincipal = err?.message || 'Falha ao baixar a atualização. Verifique sua conexão e tente novamente.';
       setErro(msgPrincipal);
 
       // Captura do erro completo com JSON.stringify(err, Object.getOwnPropertyNames(err))
@@ -385,6 +409,25 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
     }
   };
 
+  // Item 7: Aplicação da atualização após toque explícito em "Aplicar"
+  const handleAplicar = async () => {
+    if (!bundleBaixado) return;
+    try {
+      setEtapa('aplicando');
+      setStatusTexto('Aplicando pacote com segurança...');
+      await CapacitorUpdater.set(bundleBaixado);
+      setEtapa('concluido');
+      setStatusTexto('Atualização concluída com sucesso! Reiniciando...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 700);
+    } catch (err: any) {
+      console.error('Erro ao aplicar atualização:', err);
+      setEtapa('baixado');
+      setErro('Falha ao aplicar pacote: ' + (err?.message || err));
+    }
+  };
+
   return (
     <ModalBase
       aberto={aberto}
@@ -394,9 +437,54 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       subtitulo={`v${versaoAtual} ➔ ${novaVersao.startsWith('v') ? novaVersao : `v${novaVersao}`}`}
       tamanhoMaximo="max-w-md"
       rodape={
-        atualizando ? (
+        exigeNovoApk ? (
+          <div className="flex flex-col sm:flex-row gap-3 w-full">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer select-none"
+            >
+              Fechar
+            </button>
+            <button
+              type="button"
+              onClick={handleAbrirNoNavegador}
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer select-none"
+            >
+              <ExternalLink className="w-4 h-4" />
+              <span>Baixar novo APK</span>
+            </button>
+          </div>
+        ) : etapa === 'baixando' ? (
           <div className="w-full text-center py-2 text-xs font-bold text-blue-600 dark:text-blue-400">
+            {statusTexto || 'Baixando pacote...'} ({progresso}%)
+          </div>
+        ) : etapa === 'aplicando' ? (
+          <div className="w-full text-center py-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
             Aplicando pacote com segurança...
+          </div>
+        ) : etapa === 'concluido' ? (
+          <div className="w-full text-center py-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            Reiniciando o aplicativo...
+          </div>
+        ) : etapa === 'baixado' ? (
+          /* Item 7: Atualização baixada. Toque em Aplicar */
+          <div className="flex flex-col-reverse min-[361px]:flex-row items-stretch gap-3 w-full">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer select-none"
+            >
+              Depois
+            </button>
+            <button
+              type="button"
+              onClick={handleAplicar}
+              className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs shadow-md shadow-emerald-600/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer select-none animate-pulse"
+            >
+              <Check className="w-4 h-4" />
+              <span>Aplicar</span>
+            </button>
           </div>
         ) : (
           <div className="flex flex-col-reverse min-[361px]:flex-row items-stretch gap-3 w-full">
@@ -421,7 +509,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  <span>Atualizar agora</span>
+                  <span>Baixar atualização</span>
                 </>
               )}
             </button>
@@ -430,6 +518,32 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       }
     >
       <div className="space-y-3">
+        {/* Aviso de Falha Anterior (Item 7) */}
+        {falhaAnterior && etapa === 'pronto_download' && (
+          <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">Aviso: A inicialização ou tentativa anterior apresentou erro</span>
+              <span className="text-[11px] text-amber-800 dark:text-amber-300">
+                Certifique-se de que a conexão esteja estável antes de baixar e aplicar esta atualização.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Aviso de Exigência de Novo APK (Item 6) */}
+        {exigeNovoApk && (
+          <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">Esta atualização exige instalar o APK mais recente</span>
+              <span className="text-[11px] text-amber-800 dark:text-amber-300">
+                Esta versão requer o build nativo {releaseNativeBuild} (instalado: build {appNativeBuild}). O download direto foi bloqueado para sua segurança. Toque em "Baixar novo APK" abaixo.
+              </span>
+            </div>
+          </div>
+        )}
+
         {downloadUrl ? (
           <div className="flex items-center justify-between text-xs p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
             <div className="flex items-center gap-2 min-w-0">

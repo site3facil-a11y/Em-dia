@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Edit3, AlertCircle, Info, Calendar, Bell } from 'lucide-react';
 import { Categoria, Parcela } from '../types';
 import { EditarParcelaInput } from '../db/repository';
@@ -31,24 +31,30 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   const [formaPagamento, setFormaPagamento] = useState('Geral');
   const [observacoes, setObservacoes] = useState('');
   const [lembreteAtivo, setLembreteAtivo] = useState(false);
-  const [escopo, setEscopo] = useState<'apenas_esta' | 'esta_e_proximas'>('apenas_esta');
+  const [escopo, setEscopo] = useState<'apenas_esta' | 'esta_e_proximas'>('esta_e_proximas');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
+  const resetParaParcela = useCallback((p: Parcela) => {
+    setDescricao(p.conta_descricao || '');
+    setCategoriaId(p.categoria_id || categorias[0]?.id || 1);
+    // parcela.valor é armazenado em centavos inteiros (INTEGER)
+    setValorStr((p.valor / 100).toFixed(2).replace('.', ','));
+    setDataVencimento(p.data_vencimento);
+    setFormaPagamento(p.forma_pagamento || 'Geral');
+    setObservacoes(p.observacoes || '');
+    setLembreteAtivo(temLembrete(p.conta_id));
+    // Opção padrão na edição: sempre 'esta_e_proximas' (Item 1)
+    setEscopo('esta_e_proximas');
+    setErro(null);
+    setSalvando(false);
+  }, [categorias]);
+
   useEffect(() => {
-    if (parcela) {
-      setDescricao(parcela.conta_descricao || '');
-      setCategoriaId(parcela.categoria_id || categorias[0]?.id || 1);
-      // parcela.valor é armazenado em centavos inteiros (INTEGER)
-      setValorStr((parcela.valor / 100).toFixed(2).replace('.', ','));
-      setDataVencimento(parcela.data_vencimento);
-      setFormaPagamento(parcela.forma_pagamento || 'Geral');
-      setObservacoes(parcela.observacoes || '');
-      setLembreteAtivo(temLembrete(parcela.conta_id));
-      setEscopo('apenas_esta');
-      setErro(null);
+    if (parcela && aberto) {
+      resetParaParcela(parcela);
     }
-  }, [parcela, categorias]);
+  }, [parcela, aberto, resetParaParcela]);
 
   if (!aberto || !parcela) return null;
 
@@ -117,9 +123,10 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
         data_vencimento: dataVencimento,
         forma_pagamento: formaPagamento,
         observacoes: observacoes.trim() || undefined,
-        escopo,
+        escopo: isParceladaOuRecorrente ? escopo : 'apenas_esta',
       });
       definirLembrete(parcela.conta_id, lembreteAtivo);
+      if (parcela) resetParaParcela(parcela);
       onFechar();
     } catch (err: any) {
       setErro(err?.message || 'Falha ao salvar alterações.');
@@ -128,10 +135,15 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
     }
   };
 
+  const handleFecharModal = () => {
+    if (parcela) resetParaParcela(parcela);
+    onFechar();
+  };
+
   return (
     <ModalBase
       aberto={aberto}
-      onFechar={onFechar}
+      onFechar={handleFecharModal}
       icone={<Edit3 className="w-5 h-5" />}
       titulo="Editar Pagamento"
       subtitulo={

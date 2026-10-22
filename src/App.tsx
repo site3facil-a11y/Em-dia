@@ -65,6 +65,7 @@ import {
 import { executarCopiaAutomaticaSemanalSeNecessario } from './utils/copiaAutomatica';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 
 export default function App() {
   // Modo Escuro (segue o sistema por padrão, com opção manual)
@@ -90,13 +91,6 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Notifica o plugin de atualização que o app iniciou com sucesso
-  useEffect(() => {
-    CapacitorUpdater.notifyAppReady().catch((err) => {
-      console.warn('CapacitorUpdater.notifyAppReady aviso no App:', err);
-    });
-  }, []);
-
   // Aba selecionada na barra inferior: 'inicio' | 'graficos' | 'parcelas' | 'categorias' | 'ajustes'
   const [abaAtiva, setAbaAtiva] = useState<string>('inicio');
   const [mesSelecionado, setMesSelecionado] = useState<string>(getMesAnoAtual());
@@ -111,8 +105,13 @@ export default function App() {
   const [parcelamentos, setParcelamentos] = useState<ParcelamentoItem[]>([]);
   const [metricas, setMetricas] = useState<DashboardMetrics | null>(null);
 
-  // Modais
+  // Modais com chaves de renovação de estado (Item 2)
+  const [modalNovaContaKey, setModalNovaContaKey] = useState(0);
   const [modalNovaContaAberto, setModalNovaContaAberto] = useState(false);
+  const abrirNovaConta = useCallback(() => {
+    setModalNovaContaKey((k) => k + 1);
+    setModalNovaContaAberto(true);
+  }, []);
   const [modalPorquinhoAberto, setModalPorquinhoAberto] = useState(false);
   const [parcelaEmPagamento, setParcelaEmPagamento] = useState<Parcela | null>(null);
   const [contaEmEdicao, setContaEmEdicao] = useState<Conta | null>(null);
@@ -175,22 +174,48 @@ export default function App() {
     };
   }, []);
 
-  // Reagendamento ao voltar do segundo plano (appStateChange) ou tela visível (Item 6)
+  // Item 1: notifyAppReady() SOMENTE depois que o banco abriu, as migrações terminaram e a primeira tela renderizou
+  useEffect(() => {
+    if (splashConcluida && !carregando && metricas !== null) {
+      try {
+        localStorage.setItem('init_falhas', '0');
+        localStorage.removeItem('ultima_atualizacao_falhou');
+      } catch (err) {
+        console.warn('Aviso ao zerar init_falhas no localStorage:', err);
+      }
+
+      try {
+        if (Capacitor.isPluginAvailable('CapacitorUpdater')) {
+          CapacitorUpdater.notifyAppReady().catch((err) => {
+            console.warn('CapacitorUpdater.notifyAppReady aviso no App:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('CapacitorUpdater.notifyAppReady erro:', err);
+      }
+    }
+  }, [splashConcluida, carregando, metricas]);
+
+  // Reagendamento ao voltar do segundo plano (appStateChange) ou tela visível (Item 3)
   useEffect(() => {
     let handleListener: any = null;
     try {
-      CapApp.addListener('appStateChange', (state) => {
-        if (state.isActive) {
-          reagendarNotificacoes().catch(() => {});
-        }
-      }).then((h) => {
-        handleListener = h;
-      }).catch(() => {});
-    } catch {}
+      if (Capacitor.isPluginAvailable('App')) {
+        CapApp.addListener('appStateChange', (state) => {
+          if (state.isActive) {
+            reagendarNotificacoes().catch((err) => console.error('Erro ao reagendar no appStateChange:', err));
+          }
+        }).then((h) => {
+          handleListener = h;
+        }).catch((err) => console.error('Erro ao registrar listener appStateChange:', err));
+      }
+    } catch (err) {
+      console.error('Erro na checagem do plugin App:', err);
+    }
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        reagendarNotificacoes().catch(() => {});
+        reagendarNotificacoes().catch((err) => console.error('Erro ao reagendar no visibilitychange:', err));
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -201,46 +226,80 @@ export default function App() {
     };
   }, []);
 
-  // Executa verificação e reparação de parcelas e exibe lembretes internos na abertura
+  // Tarefas opcionais (reparar parcelas, recalcular totais, reagendar notificações, resumo de atrasadas)
+  // rodam DEPOIS da primeira tela, em segundo plano, cada uma com try/catch e console.error (Item 4)
   useEffect(() => {
     if (!splashConcluida) return;
 
-    // Item 4: Recalcular totais e reparar parcelas na inicialização de forma idempotente
-    Promise.all([
-      verificarERepararParcelas(),
-      recalcularTotaisContas(),
-    ])
-      .then(([resumoReparacao, resumoTotais]) => {
-        if (resumoReparacao.parcelasGeradas > 0 || resumoTotais.contasCorrigidas > 0) {
-          carregarDados(true);
+    const timer = setTimeout(() => {
+      // 1. Recalcular totais de contas
+      try {
+        recalcularTotaisContas()
+          .then((resumoTotais) => {
+            if (resumoTotais.contasCorrigidas > 0) {
+              carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-recalculo:', e));
+            }
+          })
+          .catch((err) => {
+            console.error('Erro em segundo plano ao recalcular totais:', err);
+          });
+      } catch (err) {
+        console.error('Exceção síncrona ao recalcular totais:', err);
+      }
+
+      // 2. Verificar e reparar parcelas
+      try {
+        verificarERepararParcelas()
+          .then((resumoReparacao) => {
+            if (resumoReparacao.parcelasGeradas > 0) {
+              carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-reparação:', e));
+            }
+          })
+          .catch((err) => {
+            console.error('Erro em segundo plano ao reparar parcelas:', err);
+          });
+      } catch (err) {
+        console.error('Exceção síncrona ao reparar parcelas:', err);
+      }
+
+      // 3. Cópia automática semanal do banco de dados
+      try {
+        executarCopiaAutomaticaSemanalSeNecessario().catch((err) => {
+          console.error('Erro em segundo plano na cópia automática semanal:', err);
+        });
+      } catch (err) {
+        console.error('Exceção síncrona na cópia automática semanal:', err);
+      }
+
+      // 4. Lembretes e reagendamento de notificações
+      try {
+        if (!lembretesAberturaExibidosRef.current) {
+          lembretesAberturaExibidosRef.current = true;
+          listarParcelas({ status: 'pendente', mesAno: 'todos' })
+            .then((todasPendentes) => {
+              reagendarNotificacoes(todasPendentes).catch((err) => {
+                console.error('Erro em segundo plano ao reagendar notificações:', err);
+              });
+              verificarNotificacaoResumoAtrasadas(todasPendentes).catch((err) => {
+                console.error('Erro em segundo plano ao verificar resumo de atrasadas:', err);
+              });
+
+              const lembretes = obterParcelasLembreteHoje(todasPendentes);
+              if (lembretes.length > 0) {
+                setParcelasLembreteHoje(lembretes);
+                setModalLembretesHojeAberto(true);
+              }
+            })
+            .catch((err) => {
+              console.error('Erro em segundo plano ao listar parcelas para lembretes:', err);
+            });
         }
-      })
-      .catch((err) => {
-        console.warn('Aviso ao verificar e recalcular na inicialização:', err);
-      });
+      } catch (err) {
+        console.error('Exceção síncrona ao inicializar lembretes:', err);
+      }
+    }, 600);
 
-    // Cópia automática semanal do banco de dados (Item 5)
-    executarCopiaAutomaticaSemanalSeNecessario()
-      .catch((err) => {
-        console.warn('Aviso ao executar cópia automática semanal:', err);
-      });
-
-    // Lembrete exibido dentro do app na abertura e agendamento nativo do Android (Itens 3, 4, 6)
-    if (!lembretesAberturaExibidosRef.current) {
-      lembretesAberturaExibidosRef.current = true;
-      listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
-        // Agendamento das notificações nativas do Android dos próximos 45 dias
-        reagendarNotificacoes(todasPendentes).catch(() => {});
-        // Resumo de contas atrasadas (Item 4)
-        verificarNotificacaoResumoAtrasadas(todasPendentes).catch(() => {});
-
-        const lembretes = obterParcelasLembreteHoje(todasPendentes);
-        if (lembretes.length > 0) {
-          setParcelasLembreteHoje(lembretes);
-          setModalLembretesHojeAberto(true);
-        }
-      });
-    }
+    return () => clearTimeout(timer);
   }, [splashConcluida, carregarDados]);
 
   useEffect(() => {
@@ -415,7 +474,7 @@ export default function App() {
         <TopAppBar
           darkMode={darkMode}
           setDarkMode={setDarkMode}
-          onNovaConta={() => setModalNovaContaAberto(true)}
+          onNovaConta={abrirNovaConta}
         />
 
         {/* Conteúdo Dinâmico das Abas */}
@@ -433,7 +492,7 @@ export default function App() {
               setMesSelecionado={setMesSelecionado}
               onPagarParcela={handlePagarParcelaRapido}
               onDesfazerPagamento={handleDesfazerPagamento}
-              onNovaConta={() => setModalNovaContaAberto(true)}
+              onNovaConta={abrirNovaConta}
               onVerDetalhes={handleVerDetalhesConta}
               onEditarParcela={handleEditarParcela}
               onExcluirParcela={handleAbrirExclusaoParcela}
@@ -459,7 +518,7 @@ export default function App() {
                 itens={parcelamentos}
                 onPagarParcela={(p) => setParcelaEmPagamento(p)}
                 onDesfazerPagamento={handleDesfazerPagamento}
-                onNovaConta={() => setModalNovaContaAberto(true)}
+                onNovaConta={abrirNovaConta}
                 carregando={carregando}
               />
             </div>
@@ -515,7 +574,7 @@ export default function App() {
           abaAtiva={abaAtiva}
           setAbaAtiva={setAbaAtiva}
           qtdAtrasadas={metricas?.qtdAtrasadas || 0}
-          onNovaConta={() => setModalNovaContaAberto(true)}
+          onNovaConta={abrirNovaConta}
           ocultar={
             modalNovaContaAberto ||
             modalPorquinhoAberto ||
@@ -529,12 +588,15 @@ export default function App() {
         />
 
         {/* Modais */}
-        <ModalNovaConta
-          aberto={modalNovaContaAberto}
-          onFechar={() => setModalNovaContaAberto(false)}
-          categorias={categorias}
-          onSalvar={handleSalvarNovaConta}
-        />
+        {modalNovaContaAberto && (
+          <ModalNovaConta
+            key={`nova-conta-${modalNovaContaKey}`}
+            aberto={modalNovaContaAberto}
+            onFechar={() => setModalNovaContaAberto(false)}
+            categorias={categorias}
+            onSalvar={handleSalvarNovaConta}
+          />
+        )}
 
         <ModalCriarPorquinho
           aberto={modalPorquinhoAberto}
@@ -557,13 +619,16 @@ export default function App() {
           onSalvar={handleSalvarEdicaoConta}
         />
 
-        <ModalEditarParcela
-          aberto={parcelaEmEdicao !== null}
-          onFechar={() => setParcelaEmEdicao(null)}
-          parcela={parcelaEmEdicao}
-          categorias={categorias}
-          onSalvar={handleSalvarEdicaoParcela}
-        />
+        {parcelaEmEdicao && (
+          <ModalEditarParcela
+            key={`editar-parcela-${parcelaEmEdicao.id}`}
+            aberto={parcelaEmEdicao !== null}
+            onFechar={() => setParcelaEmEdicao(null)}
+            parcela={parcelaEmEdicao}
+            categorias={categorias}
+            onSalvar={handleSalvarEdicaoParcela}
+          />
+        )}
 
         <ModalConfirmarExclusao
           aberto={parcelaEmExclusao !== null}
