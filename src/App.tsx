@@ -174,7 +174,7 @@ export default function App() {
     };
   }, []);
 
-  // Item 1: notifyAppReady() SOMENTE depois que o banco abriu, as migrações terminaram e a primeira tela renderizou
+  // Confirmação adicional de prontidão e limpeza de marcadores de falha
   useEffect(() => {
     if (splashConcluida && !carregando && metricas !== null) {
       try {

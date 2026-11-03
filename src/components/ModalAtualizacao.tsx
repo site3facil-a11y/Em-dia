@@ -418,8 +418,12 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
       await CapacitorUpdater.set(bundleBaixado);
       setEtapa('concluido');
       setStatusTexto('Atualização concluída com sucesso! Reiniciando...');
+      // No ambiente nativo, CapacitorUpdater.set já recarrega a WebView automaticamente.
+      // Mantemos o reload como fallback para navegadores/web.
       setTimeout(() => {
-        window.location.reload();
+        if (!Capacitor.isNativePlatform()) {
+          window.location.reload();
+        }
       }, 700);
     } catch (err: any) {
       console.error('Erro ao aplicar atualização:', err);

@@ -7,7 +7,8 @@
   },
   "plugins": {
     "CapacitorUpdater": {
-      "autoUpdate": false
+      "autoUpdate": false,
+      "appReadyTimeout": 30000
     },
     "SplashScreen": {
       "launchAutoHide": false,

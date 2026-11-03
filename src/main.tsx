@@ -5,32 +5,20 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { SplashScreen as NativeSplashScreen } from '@capacitor/splash-screen';
 import { Capacitor } from '@capacitor/core';
 
-// 1. Contador de falhas de inicialização (Item 2)
-// Aumenta no início da inicialização e zera depois do sucesso completo da primeira tela
+// 1. Notifica a camada nativa que o JavaScript inicializou com sucesso
+// CRÍTICO: notifyAppReady() DEVE ser chamado no carregamento do bundle para evitar
+// o rollback automático de 10s no Android nativo.
 try {
-  const falhasStr = localStorage.getItem('init_falhas') || '0';
-  const falhas = parseInt(falhasStr, 10) || 0;
-  if (falhas >= 2) {
-    console.error(`[Updater] ${falhas} falhas consecutivas de inicialização detectadas. Restaurando versão original do APK...`);
-    localStorage.setItem('init_falhas', '0');
-    localStorage.setItem('ultima_atualizacao_falhou', 'true');
-    if (Capacitor.isPluginAvailable('CapacitorUpdater')) {
-      CapacitorUpdater.reset()
-        .catch((err) => console.warn('Erro ao resetar CapacitorUpdater:', err))
-        .finally(() => {
-          window.location.reload();
-        });
-    } else {
-      window.location.reload();
-    }
-  } else {
-    localStorage.setItem('init_falhas', String(falhas + 1));
+  if (Capacitor.isPluginAvailable('CapacitorUpdater')) {
+    CapacitorUpdater.notifyAppReady().catch((err) => {
+      console.warn('CapacitorUpdater.notifyAppReady aviso no main:', err);
+    });
   }
-} catch (e) {
-  console.warn('Aviso ao verificar contador init_falhas no main.tsx:', e);
+} catch (err) {
+  console.warn('Erro ao chamar notifyAppReady no main:', err);
 }
 
-// 2. Garante que SplashScreen nativa só seja chamada com try/catch e verificação de plugin (Item 3)
+// 2. Garante que SplashScreen nativa só seja chamada com try/catch e verificação de plugin
 try {
   if (Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('SplashScreen')) {
     NativeSplashScreen.hide().catch((err) => {
@@ -40,9 +28,6 @@ try {
 } catch (err) {
   console.warn('Erro ao verificar SplashScreen nativa:', err);
 }
-
-// NOTA (Item 1): CapacitorUpdater.notifyAppReady() foi REMOVIDO do início do app!
-// Ele é chamado ESTRITAMENTE em App.tsx após o banco abrir, as migrações terminarem e a primeira tela renderizar.
 
 // Remove qualquer Service Worker residual para garantir que não haja PWA ativo
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
