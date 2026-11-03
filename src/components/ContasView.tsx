@@ -381,10 +381,12 @@ export const ContasView: React.FC<ContasViewProps> = ({
 
                       {/* Parcela */}
                       <td className="py-3 px-3">
-                        {p.total_parcelas > 1 ? (
+                        {p.tipo_conta === 'parcelada' && p.total_parcelas > 1 ? (
                           <span className="font-mono font-semibold px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
                             {p.numero_parcela} / {p.total_parcelas}
                           </span>
+                        ) : p.tipo_conta === 'recorrente' ? (
+                          <span className="text-slate-400 font-medium">Recorrente</span>
                         ) : (
                           <span className="text-slate-400 font-medium">Única</span>
                         )}
@@ -505,7 +507,7 @@ export const ContasView: React.FC<ContasViewProps> = ({
                           />
                           {p.categoria_nome}
                         </span>
-                        {p.total_parcelas > 1 && (
+                        {p.tipo_conta === 'parcelada' && p.total_parcelas > 1 && (
                           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-bold">
                             {p.numero_parcela}/{p.total_parcelas}
                           </span>

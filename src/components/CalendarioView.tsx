@@ -321,7 +321,7 @@ export const CalendarioView: React.FC<CalendarioViewProps> = ({
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                             {p.categoria_nome}
                           </span>
-                          {p.total_parcelas > 1 && (
+                          {p.tipo_conta === 'parcelada' && p.total_parcelas > 1 && (
                             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 font-bold">
                               {p.numero_parcela}/{p.total_parcelas}
                             </span>

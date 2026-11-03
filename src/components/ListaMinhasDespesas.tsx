@@ -266,7 +266,7 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
                     Lembrete
                   </span>
                 )}
-                {p.total_parcelas > 1 && (
+                {p.tipo_conta === 'parcelada' && p.total_parcelas > 1 && (
                   <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-900/50">
                     {p.numero_parcela}/{p.total_parcelas}
                   </span>

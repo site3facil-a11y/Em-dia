@@ -59,10 +59,9 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   if (!aberto || !parcela) return null;
 
   const isPaga = parcela.status === 'pago';
-  const isParceladaOuRecorrente =
-    parcela.total_parcelas > 1 ||
-    parcela.tipo_conta === 'parcelada' ||
-    parcela.tipo_conta === 'recorrente';
+  const isParcelada = parcela.tipo_conta === 'parcelada' && parcela.total_parcelas > 1;
+  const isRecorrente = parcela.tipo_conta === 'recorrente';
+  const isParceladaOuRecorrente = isParcelada || isRecorrente;
 
   const valorCentavos = parseMoedaParaCentavos(valorStr);
 
@@ -147,8 +146,10 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
       icone={<Edit3 className="w-5 h-5" />}
       titulo="Editar Pagamento"
       subtitulo={
-        parcela.total_parcelas > 1
+        isParcelada
           ? `Parcela ${parcela.numero_parcela} de ${parcela.total_parcelas}`
+          : isRecorrente
+          ? 'Pagamento recorrente'
           : 'Conta de pagamento único'
       }
       asForm={true}
@@ -196,11 +197,11 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
           </div>
 
           {/* Valor e Número de Parcelas (se parcelada) */}
-          <div className={`grid ${(parcela.total_parcelas > 1 || parcela.tipo_conta === 'parcelada') ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3`}>
+          <div className={`grid ${isParcelada ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-3`}>
             {/* Valor */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                {(parcela.total_parcelas > 1 || parcela.tipo_conta === 'parcelada')
+                {isParcelada
                   ? 'Valor da parcela (R$) *'
                   : 'Valor (R$) *'}
               </label>
@@ -233,8 +234,8 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
               )}
             </div>
 
-            {/* Número de Parcelas (preenchido com o valor atual) */}
-            {(parcela.total_parcelas > 1 || parcela.tipo_conta === 'parcelada') && (
+            {/* Número de Parcelas (somente para contas parceladas) */}
+            {isParcelada && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Número de Parcelas
@@ -361,10 +362,14 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
                   />
                   <div>
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      Aplicar apenas a esta parcela ({parcela.numero_parcela}/{parcela.total_parcelas})
+                      {isParcelada
+                        ? `Aplicar apenas a esta parcela (${parcela.numero_parcela}/${parcela.total_parcelas})`
+                        : 'Aplicar apenas a este pagamento'}
                     </span>
                     <span className="text-[11px] text-slate-500">
-                      As outras parcelas da conta permanecerão inalteradas.
+                      {isParcelada
+                        ? 'As outras parcelas da conta permanecerão inalteradas.'
+                        : 'Os próximos pagamentos permanecerão inalterados.'}
                     </span>
                   </div>
                 </label>

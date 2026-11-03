@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Trash2, AlertTriangle } from 'lucide-react';
 import { Parcela } from '../types';
-import { formatarMoeda } from '../utils/formatters';
+import { formatarMoeda, formatarData } from '../utils/formatters';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface ModalConfirmarExclusaoProps {
@@ -22,10 +22,9 @@ export const ModalConfirmarExclusao: React.FC<ModalConfirmarExclusaoProps> = ({
 
   if (!aberto || !parcela) return null;
 
-  const isParceladaOuRecorrente =
-    parcela.total_parcelas > 1 ||
-    parcela.tipo_conta === 'parcelada' ||
-    parcela.tipo_conta === 'recorrente';
+  const isParcelada = parcela.tipo_conta === 'parcelada' && parcela.total_parcelas > 1;
+  const isRecorrente = parcela.tipo_conta === 'recorrente';
+  const isParceladaOuRecorrente = isParcelada || isRecorrente;
 
   const handleConfirmar = async () => {
     try {
@@ -63,7 +62,7 @@ export const ModalConfirmarExclusao: React.FC<ModalConfirmarExclusaoProps> = ({
 
         {/* Conteúdo */}
         <div className="mt-4 space-y-3">
-          {isParceladaOuRecorrente ? (
+          {isParcelada ? (
             <div>
               <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mb-3">
                 Esta conta possui <strong>{parcela.total_parcelas} parcelas</strong> cadastradas. O que você deseja excluir?
@@ -102,6 +101,50 @@ export const ModalConfirmarExclusao: React.FC<ModalConfirmarExclusaoProps> = ({
                     </strong>
                     <span className="text-[11px] text-slate-500">
                       Remove a conta e todas as suas {parcela.total_parcelas} parcelas do banco SQLite.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          ) : isRecorrente ? (
+            <div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mb-3">
+                Esta conta é de <strong>pagamento recorrente</strong>. O que você deseja excluir?
+              </p>
+
+              <div className="space-y-2">
+                <label className="flex items-start gap-3 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition-colors">
+                  <input
+                    type="radio"
+                    name="tipoExclusao"
+                    checked={opcao === 'parcela'}
+                    onChange={() => setOpcao('parcela')}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <strong className="block text-xs font-bold text-slate-900 dark:text-white">
+                      Excluir só este mês
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Remove apenas o vencimento de {formatarData(parcela.data_vencimento)} ({formatarMoeda(parcela.valor)}). Os próximos meses continuam ativos.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition-colors">
+                  <input
+                    type="radio"
+                    name="tipoExclusao"
+                    checked={opcao === 'conta'}
+                    onChange={() => setOpcao('conta')}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <strong className="block text-xs font-bold text-rose-600 dark:text-rose-400">
+                      Excluir a conta inteira (todos os lançamentos)
+                    </strong>
+                    <span className="text-[11px] text-slate-500">
+                      Remove a conta recorrente e todos os seus lançamentos do banco SQLite.
                     </span>
                   </div>
                 </label>

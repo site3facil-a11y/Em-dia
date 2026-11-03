@@ -74,7 +74,13 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
           </button>
         </div>
       }
-      subtitulo={`${primeira.categoria_nome} • ${primeira.total_parcelas > 1 ? `${primeira.total_parcelas} parcelas` : 'Pagamento único'}`}
+      subtitulo={`${primeira.categoria_nome} • ${
+        primeira.tipo_conta === 'parcelada' && primeira.total_parcelas > 1
+          ? `${primeira.total_parcelas} parcelas`
+          : primeira.tipo_conta === 'recorrente'
+          ? 'Pagamento recorrente'
+          : 'Pagamento único'
+      }`}
       tamanhoMaximo="max-w-2xl"
       rodape={
         <button
@@ -110,25 +116,27 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
             </div>
           </div>
 
-          {/* Barra de Progresso */}
-          <div>
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-500 mb-1">
-              <span>{parcelasPagas} de {parcelas.length} parcelas quitadas</span>
-              <span>{pct.toFixed(0)}%</span>
+          {/* Barra de Progresso (apenas para parceladas) */}
+          {primeira.tipo_conta === 'parcelada' && (
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-500 mb-1">
+                <span>{parcelasPagas} de {parcelas.length} parcelas quitadas</span>
+                <span>{pct.toFixed(0)}%</span>
+              </div>
+              <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
             </div>
-            <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Lista de Parcelas Scrollável */}
         <div className="overflow-y-auto flex-1 py-3 space-y-2 pr-1">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-            Todas as Parcelas
+            {primeira.tipo_conta === 'recorrente' ? 'Lançamentos' : 'Todas as Parcelas'}
           </h4>
 
           {parcelas.map((p, idx) => {
@@ -142,9 +150,15 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <span className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
-                      {p.numero_parcela}
-                    </span>
+                    {primeira.tipo_conta === 'parcelada' ? (
+                      <span className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
+                        {p.numero_parcela}
+                      </span>
+                    ) : (
+                      <span className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400">
+                        <Calendar className="w-4 h-4" />
+                      </span>
+                    )}
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">

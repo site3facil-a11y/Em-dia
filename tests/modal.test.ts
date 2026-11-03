@@ -70,4 +70,23 @@ describe('Modal Dimension & Viewport Validation', () => {
     expect(painelHeightComTeclado).toBe(460);
     expect(painelHeightComTeclado).toBeLessThan(viewportHeight);
   });
+
+  it('valida que números de parcelas são exibidos apenas para contas parceladas e nunca para recorrentes ou únicas', () => {
+    function deveExibirBadgeParcelas(tipoConta: string | undefined, totalParcelas: number): boolean {
+      return tipoConta === 'parcelada' && totalParcelas > 1;
+    }
+
+    // Pagamentos recorrentes (ex.: Pensão, Luz, Internet, Aluguel, Duda com 12 ou 13 geradas)
+    expect(deveExibirBadgeParcelas('recorrente', 12)).toBe(false);
+    expect(deveExibirBadgeParcelas('recorrente', 13)).toBe(false);
+    expect(deveExibirBadgeParcelas('recorrente', 1)).toBe(false);
+
+    // Pagamentos únicos (1 parcela)
+    expect(deveExibirBadgeParcelas('unica', 1)).toBe(false);
+
+    // Pagamentos parcelados (ex.: Seguro auto 1/8)
+    expect(deveExibirBadgeParcelas('parcelada', 8)).toBe(true);
+    expect(deveExibirBadgeParcelas('parcelada', 12)).toBe(true);
+    expect(deveExibirBadgeParcelas('parcelada', 1)).toBe(false);
+  });
 });

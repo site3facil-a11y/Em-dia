@@ -305,7 +305,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                           {p.categoria_nome}
                         </span>
-                        {p.total_parcelas > 1 && (
+                        {p.tipo_conta === 'parcelada' && p.total_parcelas > 1 && (
                           <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
                             {p.numero_parcela}/{p.total_parcelas}
                           </span>

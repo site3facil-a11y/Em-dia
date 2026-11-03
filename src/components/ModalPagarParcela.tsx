@@ -84,7 +84,7 @@ export const ModalPagarParcela: React.FC<ModalPagarParcelaProps> = ({
                 <span className="text-xs text-slate-500">
                   {parcela.categoria_nome}
                 </span>
-                {parcela.total_parcelas > 1 && (
+                {parcela.tipo_conta === 'parcelada' && parcela.total_parcelas > 1 && (
                   <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold">
                     Parcela {parcela.numero_parcela}/{parcela.total_parcelas}
                   </span>
