@@ -45,4 +45,65 @@ describe('fileExport and base64 conversions', () => {
     const shortBuffer = new Uint8Array([1, 2, 3]);
     expect(validarCabecalhoSqlite(shortBuffer.buffer)).toBe(false);
   });
+
+  it('deve simular fila serializada de transações prevenindo erro "cannot start a transaction within a transaction"', async () => {
+    let filaTransacoes: Promise<void> = Promise.resolve();
+    let emTransacao = false;
+    let logExecucoes: string[] = [];
+
+    async function simularTransacao<T>(nome: string, fn: () => Promise<T>): Promise<T> {
+      if (emTransacao) {
+        logExecucoes.push(`${nome} (aninhada)`);
+        return await fn();
+      }
+
+      let resolver: () => void;
+      const esperaAtual = new Promise<void>((res) => {
+        resolver = res;
+      });
+
+      const anterior = filaTransacoes;
+      filaTransacoes = esperaAtual;
+
+      await anterior.catch(() => {});
+
+      if (emTransacao) {
+        throw new Error('cannot start a transaction within a transaction');
+      }
+
+      emTransacao = true;
+      logExecucoes.push(`${nome} (inicio)`);
+      try {
+        const res = await fn();
+        logExecucoes.push(`${nome} (fim)`);
+        return res;
+      } finally {
+        emTransacao = false;
+        resolver!();
+      }
+    }
+
+    // Executa duas operações concorrentes disparadas no mesmo instante
+    const p1 = simularTransacao('recalcularTotais', async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return 'totaisOk';
+    });
+
+    const p2 = simularTransacao('repararParcelas', async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      return 'parcelasOk';
+    });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe('totaisOk');
+    expect(r2).toBe('parcelasOk');
+
+    // Verifica que executaram sequencialmente (inicio 1 -> fim 1 -> inicio 2 -> fim 2)
+    expect(logExecucoes).toEqual([
+      'recalcularTotais (inicio)',
+      'recalcularTotais (fim)',
+      'repararParcelas (inicio)',
+      'repararParcelas (fim)',
+    ]);
+  });
 });

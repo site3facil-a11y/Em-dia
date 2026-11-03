@@ -45,8 +45,8 @@ describe('compararVersoes e validação de releases', () => {
     const appNativeBuild = 3;
 
     const releaseMesmoBuild = {
-      version: '1.0.26',
-      url: 'https://site3facil-a11y.github.io/Em-dia/dist-1.0.26.zip',
+      version: '1.0.27',
+      url: 'https://site3facil-a11y.github.io/Em-dia/dist-1.0.27.zip',
       nativeBuild: 3,
     };
     const deveBaixarMesmoBuild = releaseMesmoBuild.nativeBuild <= appNativeBuild;

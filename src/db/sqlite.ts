@@ -664,13 +664,36 @@ if (typeof window !== 'undefined') {
   });
 }
 
+let filaTransacoes: Promise<void> = Promise.resolve();
+let emTransacao = false;
+
 /**
- * Executa uma operação em transação atômica (BEGIN TRANSACTION ... COMMIT / ROLLBACK)
+ * Executa uma operação em transação atômica (BEGIN TRANSACTION ... COMMIT / ROLLBACK).
+ * Enfileira execuções concorrentes e suporta chamadas aninhadas para prevenir o erro
+ * "cannot start a transaction within a transaction" no SQLite.
  */
 export async function executarEmTransacao<T>(
   callback: (db: Database) => Promise<T> | T
 ): Promise<T> {
   const db = await getDb();
+
+  // Se já estiver dentro de uma transação ativa no mesmo fluxo (chamada aninhada):
+  if (emTransacao) {
+    return await callback(db);
+  }
+
+  // Enfileira chamadas concorrentes para garantir atomicidade e serialização
+  let resolver: () => void;
+  const esperaAtual = new Promise<void>((res) => {
+    resolver = res;
+  });
+
+  const anterior = filaTransacoes;
+  filaTransacoes = esperaAtual;
+
+  await anterior.catch(() => {});
+
+  emTransacao = true;
   db.run('BEGIN TRANSACTION;');
   try {
     const result = await callback(db);
@@ -684,6 +707,9 @@ export async function executarEmTransacao<T>(
       console.warn('Aviso ao efetuar ROLLBACK:', rbError);
     }
     throw error;
+  } finally {
+    emTransacao = false;
+    resolver!();
   }
 }
 

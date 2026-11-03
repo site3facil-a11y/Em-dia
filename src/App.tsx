@@ -231,71 +231,54 @@ export default function App() {
   useEffect(() => {
     if (!splashConcluida) return;
 
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       // 1. Recalcular totais de contas
       try {
-        recalcularTotaisContas()
-          .then((resumoTotais) => {
-            if (resumoTotais.contasCorrigidas > 0) {
-              carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-recalculo:', e));
-            }
-          })
-          .catch((err) => {
-            console.error('Erro em segundo plano ao recalcular totais:', err);
-          });
+        const resumoTotais = await recalcularTotaisContas();
+        if (resumoTotais.contasCorrigidas > 0) {
+          await carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-recalculo:', e));
+        }
       } catch (err) {
-        console.error('Exceção síncrona ao recalcular totais:', err);
+        console.error('Erro em segundo plano ao recalcular totais:', err);
       }
 
       // 2. Verificar e reparar parcelas
       try {
-        verificarERepararParcelas()
-          .then((resumoReparacao) => {
-            if (resumoReparacao.parcelasGeradas > 0) {
-              carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-reparação:', e));
-            }
-          })
-          .catch((err) => {
-            console.error('Erro em segundo plano ao reparar parcelas:', err);
-          });
+        const resumoReparacao = await verificarERepararParcelas();
+        if (resumoReparacao.parcelasGeradas > 0) {
+          await carregarDados(true).catch((e) => console.error('Erro ao recarregar dados pós-reparação:', e));
+        }
       } catch (err) {
-        console.error('Exceção síncrona ao reparar parcelas:', err);
+        console.error('Erro em segundo plano ao reparar parcelas:', err);
       }
 
       // 3. Cópia automática semanal do banco de dados
       try {
-        executarCopiaAutomaticaSemanalSeNecessario().catch((err) => {
-          console.error('Erro em segundo plano na cópia automática semanal:', err);
-        });
+        await executarCopiaAutomaticaSemanalSeNecessario();
       } catch (err) {
-        console.error('Exceção síncrona na cópia automática semanal:', err);
+        console.error('Erro em segundo plano na cópia automática semanal:', err);
       }
 
       // 4. Lembretes e reagendamento de notificações
       try {
         if (!lembretesAberturaExibidosRef.current) {
           lembretesAberturaExibidosRef.current = true;
-          listarParcelas({ status: 'pendente', mesAno: 'todos' })
-            .then((todasPendentes) => {
-              reagendarNotificacoes(todasPendentes).catch((err) => {
-                console.error('Erro em segundo plano ao reagendar notificações:', err);
-              });
-              verificarNotificacaoResumoAtrasadas(todasPendentes).catch((err) => {
-                console.error('Erro em segundo plano ao verificar resumo de atrasadas:', err);
-              });
+          const todasPendentes = await listarParcelas({ status: 'pendente', mesAno: 'todos' });
+          await reagendarNotificacoes(todasPendentes).catch((err) => {
+            console.error('Erro em segundo plano ao reagendar notificações:', err);
+          });
+          await verificarNotificacaoResumoAtrasadas(todasPendentes).catch((err) => {
+            console.error('Erro em segundo plano ao verificar resumo de atrasadas:', err);
+          });
 
-              const lembretes = obterParcelasLembreteHoje(todasPendentes);
-              if (lembretes.length > 0) {
-                setParcelasLembreteHoje(lembretes);
-                setModalLembretesHojeAberto(true);
-              }
-            })
-            .catch((err) => {
-              console.error('Erro em segundo plano ao listar parcelas para lembretes:', err);
-            });
+          const lembretes = obterParcelasLembreteHoje(todasPendentes);
+          if (lembretes.length > 0) {
+            setParcelasLembreteHoje(lembretes);
+            setModalLembretesHojeAberto(true);
+          }
         }
       } catch (err) {
-        console.error('Exceção síncrona ao inicializar lembretes:', err);
+        console.error('Erro em segundo plano ao listar parcelas para lembretes:', err);
       }
     }, 600);
 
