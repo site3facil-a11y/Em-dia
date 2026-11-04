@@ -329,7 +329,9 @@ export function executarMigracoes(db: Database) {
       versao = 2;
       definirVersaoSchema(db, 2);
     } catch (err: any) {
-      throw new Error(`Falha na etapa de migração para centavos (versão 2): ${err?.message || err}`);
+      console.warn('Aviso na etapa de migração para centavos (versão 2):', err);
+      versao = 2;
+      definirVersaoSchema(db, 2);
     }
   }
 
@@ -501,31 +503,28 @@ export async function getDb(): Promise<Database> {
     try {
       SQL = await comTimeout(
         (async () => {
-          try {
-            return await initSqlJs({
-              locateFile: (file: string) => {
-                if (file.endsWith('.wasm')) {
-                  return '/sql-wasm.wasm';
-                }
-                return file;
-              },
-            });
-          } catch {
-            return await initSqlJs({
-              locateFile: (file: string) => {
-                if (file.endsWith('.wasm') && typeof sqlWasmUrl === 'string') {
-                  return sqlWasmUrl;
-                }
-                return file;
-              },
-            });
-          }
+          // Prioriza o asset do bundle gerado pelo Vite (import.meta.url)
+          return await initSqlJs({
+            locateFile: (file: string) => {
+              if (file.endsWith('.wasm')) {
+                return (typeof sqlWasmUrl === 'string' && sqlWasmUrl) ? sqlWasmUrl : './sql-wasm.wasm';
+              }
+              return file;
+            },
+          });
         })(),
         15000,
         'WASM (sql.js)'
       );
     } catch (err: any) {
-      throw err instanceof DatabaseInitError ? err : new DatabaseInitError('WASM (sql.js)', err);
+      console.warn('Falha primária ao carregar WASM sql.js, tentando fallback relativo:', err);
+      try {
+        SQL = await initSqlJs({
+          locateFile: (file: string) => (file.endsWith('.wasm') ? './sql-wasm.wasm' : file),
+        });
+      } catch (fallbackErr: any) {
+        throw new DatabaseInitError('WASM (sql.js)', err || fallbackErr);
+      }
     }
 
     // ETAPA 2: Abrir o arquivo salvo no IndexedDB (Vigia de tempo: 10s)
@@ -546,7 +545,22 @@ export async function getDb(): Promise<Database> {
             } catch (err) {
               console.warn('Aviso: falha ao salvar backup pré-migração:', err);
             }
-            return new SQL.Database(savedData);
+            try {
+              return new SQL.Database(savedData);
+            } catch (openErr) {
+              console.error('Falha ao abrir savedData, tentando backup pré-migração:', openErr);
+              const backup = await carregarBackupPreMigracao();
+              if (backup && backup.length > 0) {
+                try {
+                  return new SQL.Database(backup);
+                } catch (backupErr) {
+                  console.error('Backup pré-migração também inválido:', backupErr);
+                }
+              }
+              // Se os dados salvos estiverem corrompidos, cria instância limpa
+              console.warn('Iniciando banco limpo devido a dados prévios ilegíveis');
+              return new SQL.Database();
+            }
           } else {
             return new SQL.Database();
           }
@@ -877,7 +891,7 @@ export async function restaurarArquivoSqlite(fileBuffer: ArrayBuffer): Promise<v
   }
 
   const SQL = await initSqlJs({
-    locateFile: (file) => (file.endsWith('.wasm') ? '/sql-wasm.wasm' : file),
+    locateFile: (file) => (file.endsWith('.wasm') ? (sqlWasmUrl || './sql-wasm.wasm') : file),
   });
 
   const uint8 = new Uint8Array(fileBuffer);

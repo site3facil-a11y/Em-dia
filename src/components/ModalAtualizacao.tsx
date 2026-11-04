@@ -479,7 +479,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               onClick={onFechar}
               className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer select-none"
             >
-              Depois
+              Continuar sem atualizar
             </button>
             <button
               type="button"
@@ -497,7 +497,7 @@ export const ModalAtualizacao: React.FC<ModalAtualizacaoProps> = ({
               onClick={onFechar}
               className="flex-1 min-h-[48px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center cursor-pointer select-none"
             >
-              {erro ? 'Fechar' : 'Depois'}
+              Continuar sem atualizar
             </button>
             <button
               type="button"

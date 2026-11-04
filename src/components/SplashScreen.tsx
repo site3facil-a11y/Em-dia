@@ -352,10 +352,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onPronto }) => {
                   disabled={executandoAcao}
                   onClick={handleVoltarVersaoOriginal}
                   className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/25 hover:bg-amber-500/35 border border-amber-400/40 active:scale-95 text-amber-200 font-bold text-xs transition-all cursor-pointer"
-                  title="Restaura a versão original embutida no APK e recarrega"
+                  title="Restaura a versão original embutida no APK e recarrega para continuar usando o app"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Voltar à versão original do app</span>
+                  <span>Voltar à versão original (Continuar sem atualizar)</span>
                 </button>
               </div>
             )}
