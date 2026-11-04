@@ -6,6 +6,7 @@
 import initSqlJs, { Database } from 'sql.js';
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { getHojeIso } from '../utils/dates';
+import { dividirEmParcelas } from '../utils/finance';
 import {
   exportarOuCompartilharArquivo,
   salvarArquivoNoDispositivo,
@@ -17,7 +18,7 @@ export const DB_NAME = 'contas_a_pagar_db';
 export const IDB_STORE = 'sqlite_store';
 export const IDB_KEY = 'sqlite_binary';
 export const IDB_BACKUP_KEY = 'em_dia_backup_pre_migracao';
-export const SCHEMA_VERSAO_ATUAL = 7;
+export const SCHEMA_VERSAO_ATUAL = 8;
 
 let dbInstance: Database | null = null;
 let initPromise: Promise<Database> | null = null;
@@ -458,6 +459,85 @@ export function executarMigracoes(db: Database) {
     }
     versao = 7;
     definirVersaoSchema(db, 7);
+  }
+
+  // Migração 8: Corrige parcelas de Porquinho que foram salvas com o valor da meta total em cada parcela
+  if (versao < 8) {
+    try {
+      const porquinhosComErro = db.exec(`
+        SELECT c.id, COUNT(p.id) as qtd, MAX(p.valor) as max_val, MIN(p.valor) as min_val
+        FROM contas c
+        JOIN parcelas p ON p.conta_id = c.id
+        WHERE (c.observacoes LIKE '%Porquinho%' OR LOWER(c.descricao) LIKE '%porquinho%' OR LOWER(c.descricao) = 'economia')
+          AND c.tipo = 'parcelada'
+        GROUP BY c.id
+        HAVING qtd > 1 AND max_val = min_val AND max_val >= 10000;
+      `);
+
+      if (porquinhosComErro[0]?.values) {
+        for (const row of porquinhosComErro[0].values) {
+          const contaId = row[0] as number;
+          const qtd = row[1] as number;
+          const valParcelaErrado = row[2] as number; // ex: 120000 (R$ 1.200,00)
+
+          // Se a parcela atual é igual a 120000 (R$ 1.200,00) e o prazo é de 12 meses:
+          // O usuário digitou 1200 como a meta total a juntar!
+          // Então cada uma das 12 parcelas deve ser 120000 / 12 = 10000 (R$ 100,00)!
+          const metaTotal = valParcelaErrado;
+          const parcelasCorretas = dividirEmParcelas(metaTotal, qtd);
+
+          const parcs = db.exec(`SELECT id FROM parcelas WHERE conta_id = ? ORDER BY numero_parcela ASC;`, [contaId]);
+          if (parcs[0]?.values) {
+            parcs[0].values.forEach((pRow, idx) => {
+              const pId = pRow[0] as number;
+              const novoValor = parcelasCorretas[idx] || Math.floor(metaTotal / qtd);
+              db.run(`UPDATE parcelas SET valor = ? WHERE id = ?;`, [novoValor, pId]);
+            });
+          }
+
+          db.run(`UPDATE contas SET valor_total = ? WHERE id = ?;`, [metaTotal, contaId]);
+        }
+      }
+    } catch (err) {
+      console.warn('Aviso durante migração 8:', err);
+    }
+    versao = 8;
+    definirVersaoSchema(db, 8);
+  }
+
+  // Migração 9: Corrige contas de Porquinho que foram indevidamente re-divididas para R$ 10,00
+  if (versao < 9) {
+    try {
+      // Repara porquinhos com 10 parcelas de 1000 centavos (R$ 10,00) restaurando para 10000 centavos (R$ 100,00)
+      const porquinhos10 = db.exec(`
+        SELECT c.id
+        FROM contas c
+        JOIN parcelas p ON p.conta_id = c.id
+        WHERE (c.observacoes LIKE '%Porquinho%' OR LOWER(c.descricao) LIKE '%porquinho%' OR LOWER(c.descricao) = 'economia')
+          AND c.tipo = 'parcelada'
+        GROUP BY c.id
+        HAVING COUNT(p.id) = 10 AND MAX(p.valor) = 1000 AND MIN(p.valor) = 1000;
+      `);
+
+      if (porquinhos10[0]?.values) {
+        for (const row of porquinhos10[0].values) {
+          const cId = row[0] as number;
+          db.run("UPDATE parcelas SET valor = 10000 WHERE conta_id = ? AND status != 'pago';", [cId]);
+          db.run("UPDATE contas SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = ?) WHERE id = ?;", [cId, cId]);
+        }
+      }
+
+      // Garante sincronização de contas.valor_total com a soma real das parcelas
+      db.run(`
+        UPDATE contas 
+        SET valor_total = (SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = contas.id)
+        WHERE EXISTS (SELECT 1 FROM parcelas p WHERE p.conta_id = contas.id);
+      `);
+    } catch (err) {
+      console.warn('Aviso durante migração 9:', err);
+    }
+    versao = 9;
+    definirVersaoSchema(db, 9);
   }
 
   // Reativa PRAGMA foreign_keys = ON

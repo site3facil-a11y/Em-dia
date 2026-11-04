@@ -29,10 +29,26 @@ export function parseMoedaParaCentavos(valor: number | string | undefined | null
 
   // Remove símbolos monetários e espaços, preservando dígitos, vírgula, ponto e hífen
   limpo = limpo.replace(/[^\d,.-]/g, '');
+  if (!limpo) return 0;
 
-  // Trata formato brasileiro (ex: 1.234,56 ou 215,5)
+  // Caso 1: Contém vírgula (formato brasileiro padrão, ex: 1.234,56 ou 215,50 ou 100,00)
   if (limpo.includes(',')) {
     limpo = limpo.replace(/\./g, '').replace(',', '.');
+  } else if (limpo.includes('.')) {
+    // Caso 2: Não contém vírgula, mas contém ponto(s)
+    const partes = limpo.split('.');
+    if (partes.length > 2) {
+      // Múltiplos pontos (ex: 1.000.000): todos são separadores de milhar
+      limpo = limpo.replace(/\./g, '');
+    } else if (partes.length === 2) {
+      // Exatamente um ponto.
+      // Se a parte após o ponto tiver exatamente 3 dígitos (ex: "1.000", "1.200", "12.000"),
+      // na notação financeira brasileira isto representa milhar (R$ 1.000, R$ 1.200).
+      if (partes[1].length === 3) {
+        limpo = limpo.replace(/\./g, '');
+      }
+      // Se tiver 1 ou 2 dígitos (ex: "215.5", "10.50"), é tratado como decimal padrão
+    }
   }
 
   const num = parseFloat(limpo);
@@ -95,4 +111,38 @@ export function dividirEmParcelas(totalCentavos: number, qtdParcelas: number): n
   }
 
   return parcelas;
+}
+
+/**
+ * Calcula os centavos das parcelas e a meta total para Porquinho / Poupança parcelada.
+ * - Modo 'total': parcela = meta total ÷ número de parcelas (divisão exata em centavos, com o resto na primeira parcela).
+ * - Modo 'parcela': meta = parcela × número de parcelas.
+ */
+export function calcularPorquinhoCentavos(
+  modo: 'total' | 'parcela',
+  valorInformado: number | string,
+  numeroParcelas: number
+): { metaTotalCentavos: number; parcelasCentavos: number[]; valorParcelaBaseCentavos: number } {
+  const qtd = Math.max(1, Math.floor(numeroParcelas));
+  const valorCentavos = parseMoedaParaCentavos(valorInformado);
+
+  if (modo === 'total') {
+    const metaTotalCentavos = valorCentavos;
+    const parcelasCentavos = dividirEmParcelas(metaTotalCentavos, qtd);
+    const valorParcelaBaseCentavos = parcelasCentavos[0] || 0;
+    return {
+      metaTotalCentavos,
+      parcelasCentavos,
+      valorParcelaBaseCentavos,
+    };
+  } else {
+    const valorParcelaBaseCentavos = valorCentavos;
+    const parcelasCentavos = Array(qtd).fill(valorParcelaBaseCentavos);
+    const metaTotalCentavos = valorParcelaBaseCentavos * qtd;
+    return {
+      metaTotalCentavos,
+      parcelasCentavos,
+      valorParcelaBaseCentavos,
+    };
+  }
 }

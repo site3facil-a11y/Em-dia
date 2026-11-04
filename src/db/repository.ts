@@ -180,15 +180,25 @@ export async function criarConta(input: NovaContaInput): Promise<number> {
     } else if (input.tipo === 'parcelada') {
       const totalParcelas = Math.max(1, input.numero_parcelas || 1);
 
-      // O valor digitado é sempre o de UMA parcela/ocorrência.
-      // Em conta parcelada, o total = valor da parcela × número de parcelas,
-      // e cada uma das N parcelas é gravada com exatamente esse valor (em centavos), sem divisão nem arredondamento.
-      const valParcCentavos = parseMoedaParaCentavos(
-        input.valor_parcela !== undefined && input.valor_parcela !== null
-          ? input.valor_parcela
-          : input.valor_total
-      );
-      const parcelasCentavos: number[] = Array(totalParcelas).fill(valParcCentavos);
+      let parcelasCentavos: number[];
+      const isModoTotal =
+        input.modo_valor_parcelado === 'total' ||
+        (!input.modo_valor_parcelado && (input.observacoes?.includes('Porquinho') || input.descricao?.toLowerCase().includes('porquinho')));
+
+      if (isModoTotal) {
+        // Se modo for 'total', o valor_total informado é a meta total dividida nas parcelas
+        parcelasCentavos = dividirEmParcelas(valorTotalCentavos, totalParcelas);
+      } else {
+        // O valor digitado é sempre o de UMA parcela/ocorrência.
+        // Em conta parcelada normal ou porquinho informado por parcela, total = valor da parcela × número de parcelas,
+        // e cada uma das N parcelas é gravada com exatamente esse valor (em centavos), sem divisão nem arredondamento.
+        const valParcCentavos = parseMoedaParaCentavos(
+          input.valor_parcela !== undefined && input.valor_parcela !== null
+            ? input.valor_parcela
+            : input.valor_total
+        );
+        parcelasCentavos = Array(totalParcelas).fill(valParcCentavos);
+      }
 
       let dataVenc = input.data_primeiro_vencimento;
       for (let i = 0; i < totalParcelas; i++) {
@@ -1043,6 +1053,13 @@ export interface ResumoRecalculoTotais {
  */
 export async function recalcularTotaisContas(): Promise<ResumoRecalculoTotais> {
   return await executarEmTransacao((db) => {
+    const detalhes: Array<{
+      contaId: number;
+      descricao: string;
+      valorAnterior: number;
+      valorNovo: number;
+    }> = [];
+
     const stmt = db.prepare(`
       SELECT 
         c.id, 
@@ -1057,13 +1074,6 @@ export async function recalcularTotaisContas(): Promise<ResumoRecalculoTotais> {
       contas.push(stmt.getAsObject());
     }
     stmt.free();
-
-    const detalhes: Array<{
-      contaId: number;
-      descricao: string;
-      valorAnterior: number;
-      valorNovo: number;
-    }> = [];
 
     for (const c of contas) {
       if (c.soma_real > 0 && c.valor_total !== c.soma_real) {

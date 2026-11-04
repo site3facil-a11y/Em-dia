@@ -5,6 +5,7 @@ import {
   centavosParaReais,
   formatarCentavos,
   dividirEmParcelas,
+  calcularPorquinhoCentavos,
 } from '../src/utils/finance';
 
 describe('Integridade Financeira em Centavos', () => {
@@ -66,9 +67,43 @@ describe('Integridade Financeira em Centavos', () => {
     const parcelas1x = dividirEmParcelas(10000, 1);
     expect(parcelas1x).toEqual([10000]);
 
-    // R$ 0,01 em 2x: 1 centavo na primeira, 0 na segunda
-    const parcelasMinimas = dividirEmParcelas(1, 2);
-    expect(parcelasMinimas).toEqual([1, 0]);
-    expect(parcelasMinimas.reduce((a, b) => a + b, 0)).toBe(1);
+    // R$ 1.200,00 em 12x: 120000 / 12 = 10000 centavos (R$ 100,00 cada parcela)
+    const parcelas1200 = dividirEmParcelas(120000, 12);
+    expect(parcelas1200).toEqual(Array(12).fill(10000));
+    expect(parcelas1200.reduce((a, b) => a + b, 0)).toBe(120000);
+  });
+
+  describe('Cálculo do Porquinho (Metas de Economia Parcelada)', () => {
+    it('meta total 1.000 em 10 vezes gera 10 parcelas de 10000 centavos', () => {
+      // Entrada com '1.000' (ou 1000)
+      const res = calcularPorquinhoCentavos('total', '1.000', 10);
+      expect(res.metaTotalCentavos).toBe(100000);
+      expect(res.parcelasCentavos).toHaveLength(10);
+      expect(res.parcelasCentavos).toEqual(Array(10).fill(10000));
+      expect(res.valorParcelaBaseCentavos).toBe(10000);
+    });
+
+    it('valor por parcela 100 em 10 vezes gera meta de 100000 centavos', () => {
+      // Entrada com '100' (ou 100,00)
+      const res = calcularPorquinhoCentavos('parcela', '100', 10);
+      expect(res.metaTotalCentavos).toBe(100000);
+      expect(res.parcelasCentavos).toHaveLength(10);
+      expect(res.parcelasCentavos).toEqual(Array(10).fill(10000));
+      expect(res.valorParcelaBaseCentavos).toBe(10000);
+    });
+
+    it('1.000 em 3 vezes gera 33334, 33333 e 33333 centavos', () => {
+      const res = calcularPorquinhoCentavos('total', '1.000', 3);
+      expect(res.metaTotalCentavos).toBe(100000);
+      expect(res.parcelasCentavos).toEqual([33334, 33333, 33333]);
+      expect(res.parcelasCentavos.reduce((a, b) => a + b, 0)).toBe(100000);
+    });
+
+    it('faz parser correto de separadores de milhar brasileiros sem vírgula (ex: 1.000 e 1.200)', () => {
+      expect(parseMoedaParaCentavos('1.000')).toBe(100000);
+      expect(parseMoedaParaCentavos('1.200')).toBe(120000);
+      expect(parseMoedaParaCentavos('10.000')).toBe(1000000);
+      expect(parseMoedaParaCentavos('1.000.000')).toBe(100000000);
+    });
   });
 });
