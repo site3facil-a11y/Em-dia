@@ -13,6 +13,13 @@ import { ConfiguracoesView } from './components/ConfiguracoesView';
 
 import { ModalNovaConta } from './components/ModalNovaConta';
 import { ModalCriarPorquinho } from './components/ModalCriarPorquinho';
+import { BannerAtualizacaoDiscreta } from './components/BannerAtualizacaoDiscreta';
+import { ModalAtualizacao, ReleaseInfo } from './components/ModalAtualizacao';
+import {
+  checarAtualizacaoAuto,
+  adiarAvisoAtualizacao,
+  ResultadoChecagemAtualizacao,
+} from './utils/autoUpdater';
 import { ModalPagarParcela } from './components/ModalPagarParcela';
 import { ModalEditarConta } from './components/ModalEditarConta';
 import { ModalEditarParcela } from './components/ModalEditarParcela';
@@ -124,6 +131,11 @@ export default function App() {
   const [modalLembretesHojeAberto, setModalLembretesHojeAberto] = useState(false);
   const [parcelasLembreteHoje, setParcelasLembreteHoje] = useState<Parcela[]>([]);
   const lembretesAberturaExibidosRef = React.useRef(false);
+
+  // Checagem automática e não-bloqueante de atualizações
+  const [avisoAtualizacao, setAvisoAtualizacao] = useState<ResultadoChecagemAtualizacao | null>(null);
+  const [modalAtualizacaoAberto, setModalAtualizacaoAberto] = useState(false);
+  const [releaseAtualizacao, setReleaseAtualizacao] = useState<ReleaseInfo | null>(null);
 
   const carregarParcelamentos = useCallback(async () => {
     try {
@@ -279,6 +291,20 @@ export default function App() {
         }
       } catch (err) {
         console.error('Erro em segundo plano ao listar parcelas para lembretes:', err);
+      }
+
+      // 5. Checagem automática de atualizações (não-bloqueante, após splash e banco)
+      try {
+        const resAtualizacao = await checarAtualizacaoAuto({
+          versaoAtual: __APP_VERSION__,
+          nativeBuildAtual: __NATIVE_BUILD__,
+        });
+        if (resAtualizacao && resAtualizacao.temAtualizacao) {
+          setAvisoAtualizacao(resAtualizacao);
+          setReleaseAtualizacao(resAtualizacao.release);
+        }
+      } catch (errAtualizacao) {
+        console.warn('Checagem automática de atualização ignorada silenciosamente:', errAtualizacao);
       }
     }, 600);
 
@@ -468,19 +494,34 @@ export default function App() {
           }}
         >
           {abaAtiva === 'inicio' && (
-            <ListaMinhasDespesas
-              parcelas={parcelas}
-              metrics={metricas}
-              mesSelecionado={mesSelecionado}
-              setMesSelecionado={setMesSelecionado}
-              onPagarParcela={handlePagarParcelaRapido}
-              onDesfazerPagamento={handleDesfazerPagamento}
-              onNovaConta={abrirNovaConta}
-              onVerDetalhes={handleVerDetalhesConta}
-              onEditarParcela={handleEditarParcela}
-              onExcluirParcela={handleAbrirExclusaoParcela}
-              carregando={carregando}
-            />
+            <>
+              {avisoAtualizacao && (
+                <BannerAtualizacaoDiscreta
+                  resultado={avisoAtualizacao}
+                  onAtualizar={() => {
+                    setReleaseAtualizacao(avisoAtualizacao.release);
+                    setModalAtualizacaoAberto(true);
+                  }}
+                  onDepois={() => {
+                    adiarAvisoAtualizacao(avisoAtualizacao.versao);
+                    setAvisoAtualizacao(null);
+                  }}
+                />
+              )}
+              <ListaMinhasDespesas
+                parcelas={parcelas}
+                metrics={metricas}
+                mesSelecionado={mesSelecionado}
+                setMesSelecionado={setMesSelecionado}
+                onPagarParcela={handlePagarParcelaRapido}
+                onDesfazerPagamento={handleDesfazerPagamento}
+                onNovaConta={abrirNovaConta}
+                onVerDetalhes={handleVerDetalhesConta}
+                onEditarParcela={handleEditarParcela}
+                onExcluirParcela={handleAbrirExclusaoParcela}
+                carregando={carregando}
+              />
+            </>
           )}
 
           {abaAtiva === 'graficos' && (
@@ -558,9 +599,11 @@ export default function App() {
           setAbaAtiva={setAbaAtiva}
           qtdAtrasadas={metricas?.qtdAtrasadas || 0}
           onNovaConta={abrirNovaConta}
+          temAtualizacao={avisoAtualizacao !== null}
           ocultar={
             modalNovaContaAberto ||
             modalPorquinhoAberto ||
+            modalAtualizacaoAberto ||
             parcelaEmPagamento !== null ||
             contaEmEdicao !== null ||
             parcelaEmEdicao !== null ||
@@ -619,6 +662,15 @@ export default function App() {
           parcela={parcelaEmExclusao}
           onConfirmar={handleConfirmarExclusaoParcela}
         />
+
+        {modalAtualizacaoAberto && releaseAtualizacao && (
+          <ModalAtualizacao
+            aberto={modalAtualizacaoAberto}
+            onFechar={() => setModalAtualizacaoAberto(false)}
+            release={releaseAtualizacao}
+            versaoAtual={__APP_VERSION__}
+          />
+        )}
 
         <SnackbarDesfazer
           visivel={snackbarDesfazerAberto}

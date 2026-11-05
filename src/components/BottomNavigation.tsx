@@ -7,6 +7,7 @@ interface BottomNavigationProps {
   qtdAtrasadas: number;
   onNovaConta: () => void;
   ocultar?: boolean;
+  temAtualizacao?: boolean;
 }
 
 export const BottomNavigation: React.FC<BottomNavigationProps> = ({
@@ -15,6 +16,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   qtdAtrasadas,
   onNovaConta,
   ocultar = false,
+  temAtualizacao = false,
 }) => {
   const [tecladoAberto, setTecladoAberto] = useState(false);
 
@@ -130,7 +132,15 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
               : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-medium'
           }`}
         >
-          <Settings className={`w-5 h-5 ${abaAtiva === 'ajustes' ? 'stroke-[2.5]' : ''}`} />
+          <div className="relative">
+            <Settings className={`w-5 h-5 ${abaAtiva === 'ajustes' ? 'stroke-[2.5]' : ''}`} />
+            {temAtualizacao && (
+              <span
+                data-testid="indicador-atualizacao-ajustes"
+                className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-600 dark:bg-blue-400 border-2 border-white dark:border-slate-900 shadow-xs"
+              />
+            )}
+          </div>
           <span className="text-[10px] mt-1 tracking-tight">Ajustes</span>
         </button>
       </div>
