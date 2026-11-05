@@ -540,6 +540,25 @@ export function executarMigracoes(db: Database) {
     definirVersaoSchema(db, 9);
   }
 
+  // Migração 10: Corrige contas comuns (recorrentes ou únicas, ex: 'medico') que foram associadas a 'Economias'
+  if (versao < 10) {
+    try {
+      db.run(`
+        UPDATE contas 
+        SET categoria_id = (SELECT id FROM categorias WHERE LOWER(nome) = 'gastos' LIMIT 1)
+        WHERE categoria_id IN (SELECT id FROM categorias WHERE LOWER(nome) LIKE '%econ%' OR LOWER(nome) LIKE '%poup%')
+          AND tipo IN ('recorrente', 'unica')
+          AND (observacoes IS NULL OR observacoes NOT LIKE '%Porquinho%')
+          AND LOWER(descricao) NOT LIKE '%porquinho%'
+          AND LOWER(descricao) != 'economia';
+      `);
+    } catch (err) {
+      console.warn('Aviso durante migração 10:', err);
+    }
+    versao = 10;
+    definirVersaoSchema(db, 10);
+  }
+
   // Reativa PRAGMA foreign_keys = ON
   db.run('PRAGMA foreign_keys = ON;');
 }

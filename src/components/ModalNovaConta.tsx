@@ -20,7 +20,8 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   categorias,
   onSalvar,
 }) => {
-  const categoriaPadraoId = categorias[0]?.id || 1;
+  const categoriaPadraoId =
+    categorias.find((c) => c.nome.toLowerCase() === 'gastos')?.id || categorias[0]?.id || 1;
 
   const [descricao, setDescricao] = useState('');
   const [valorTotalStr, setValorTotalStr] = useState('');
@@ -38,13 +39,15 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
 
   // Reinicia todos os campos para o estado limpo inicial (Item 2)
   const resetForm = useCallback(() => {
+    const padraoId =
+      categorias.find((c) => c.nome.toLowerCase() === 'gastos')?.id || categorias[0]?.id || 1;
     setDescricao('');
     setValorTotalStr('');
     setTipo('unica');
     setNumeroParcelas('');
     setFrequencia('mensal');
     setDataVencimento(getHojeString());
-    setCategoriaId(categorias[0]?.id || 1);
+    setCategoriaId(padraoId);
     setFormaPagamento('Geral');
     setLembreteAtivo(false);
     setObservacoes('');
@@ -344,18 +347,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
             </div>
           )}
 
-          {/* Painel Informativo de Recorrência (Fixa Mensal) */}
-          {tipo === 'recorrente' && (
-            <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 space-y-2 animate-in fade-in">
-              <div className="flex items-center gap-2 text-xs font-bold text-indigo-950 dark:text-indigo-200">
-                <Repeat className="w-4 h-4 text-indigo-600" />
-                <span>Conta Fixa Mensal (12 Meses Previstos)</span>
-              </div>
-              <p className="text-[11px] text-indigo-900/80 dark:text-indigo-300 leading-relaxed">
-                São gerados os próximos <strong>12 meses como previstos</strong> ({formatarMoeda(valorDigitadoCentavos)}/mês no dia {dataVencimento.slice(8)}). Ao dar baixa a cada mês, o app repõe automaticamente para <strong>sempre manter 12 meses à frente</strong> no calendário.
-              </p>
-            </div>
-          )}
+
 
           {/* Observações (Opcional - largura total) */}
           <div>

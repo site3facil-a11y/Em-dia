@@ -41,7 +41,15 @@ function formatarErroAmigavel(err: any): Error {
 
 export async function listarCategorias(): Promise<Categoria[]> {
   const db = await getDb();
-  const stmt = db.prepare('SELECT id, nome, cor FROM categorias ORDER BY nome ASC');
+  const stmt = db.prepare(`
+    SELECT id, nome, cor 
+    FROM categorias 
+    ORDER BY 
+      CASE WHEN LOWER(nome) = 'gastos' THEN 0 
+           WHEN LOWER(nome) = 'despesas' THEN 1 
+           ELSE 2 END, 
+      nome ASC
+  `);
   const categorias: Categoria[] = [];
 
   while (stmt.step()) {
@@ -801,6 +809,7 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       c.forma_pagamento,
       c.tipo,
       c.valor_total,
+      c.observacoes,
       MAX(p.total_parcelas) AS max_total_parcelas,
       COUNT(p.id) AS qtd_parcelas
     FROM contas c
@@ -892,6 +901,7 @@ export async function listarParcelamentos(): Promise<ParcelamentoItem[]> {
       saldo_restante: saldoRestante,
       proximo_vencimento: proximoVencimento,
       status_geral: statusGeral,
+      observacoes: c.observacoes,
       parcelas,
     };
   });
@@ -1091,6 +1101,21 @@ export async function recalcularTotaisContas(): Promise<ResumoRecalculoTotais> {
       SET valor_total = (SELECT SUM(p.valor) FROM parcelas p WHERE p.conta_id = contas.id)
       WHERE EXISTS (SELECT 1 FROM parcelas p WHERE p.conta_id = contas.id);
     `);
+
+    // Assegura que contas comuns (recorrentes e únicas, ex: 'medico') não fiquem na categoria Economias
+    try {
+      db.run(`
+        UPDATE contas 
+        SET categoria_id = (SELECT id FROM categorias WHERE LOWER(nome) = 'gastos' LIMIT 1)
+        WHERE categoria_id IN (SELECT id FROM categorias WHERE LOWER(nome) LIKE '%econ%' OR LOWER(nome) LIKE '%poup%')
+          AND tipo IN ('recorrente', 'unica')
+          AND (observacoes IS NULL OR observacoes NOT LIKE '%Porquinho%')
+          AND LOWER(descricao) NOT LIKE '%porquinho%'
+          AND LOWER(descricao) != 'economia';
+      `);
+    } catch (e) {
+      console.warn('Aviso ao normalizar categorias de contas comuns:', e);
+    }
 
     return {
       contasVerificadas: contas.length,

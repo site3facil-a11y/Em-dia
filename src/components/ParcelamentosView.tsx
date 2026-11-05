@@ -163,7 +163,12 @@ export const ParcelamentosView: React.FC<ParcelamentosViewProps> = ({
         <div className="space-y-3">
           {itensFiltrados.map((item) => {
             const isExpandido = expandidoId === item.conta_id;
-            const isEconomia = item.categoria_nome?.toLowerCase().includes('poupança') || item.categoria_nome?.toLowerCase().includes('economia');
+            const isEconomia =
+              item.tipo === 'parcelada' &&
+              (Boolean(item.observacoes?.includes('Porquinho')) ||
+                Boolean(item.parcelas[0]?.observacoes?.includes('Porquinho')) ||
+                item.descricao.toLowerCase().includes('porquinho') ||
+                item.descricao.toLowerCase() === 'economia');
             
             // Cálculos baseados rigorosamente nas linhas reais da tabela parcelas
             const totalContratadoItem = item.parcelas.reduce((acc, p) => acc + p.valor, 0);

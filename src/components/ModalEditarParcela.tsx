@@ -37,7 +37,8 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
 
   const resetParaParcela = useCallback((p: Parcela) => {
     setDescricao(p.conta_descricao || '');
-    setCategoriaId(p.categoria_id || categorias[0]?.id || 1);
+    const catPadrao = categorias.find((c) => c.nome.toLowerCase() === 'gastos')?.id || categorias[0]?.id || 1;
+    setCategoriaId(p.categoria_id || catPadrao);
     // parcela.valor é armazenado em centavos inteiros (INTEGER)
     setValorStr((p.valor / 100).toFixed(2).replace('.', ','));
     setDataVencimento(p.data_vencimento);
@@ -257,33 +258,18 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
             )}
           </div>
 
-          {/* Data de Vencimento e Forma de Pagamento */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Data de Vencimento *
-              </label>
-              <input
-                type="date"
-                required
-                value={dataVencimento}
-                onChange={(e) => setDataVencimento(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Forma de Pagamento
-              </label>
-              <input
-                type="text"
-                placeholder="Ex: Geral, Cartão, Dinheiro..."
-                value={formaPagamento}
-                onChange={(e) => setFormaPagamento(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
-            </div>
+          {/* Data de Vencimento */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Data de Vencimento *
+            </label>
+            <input
+              type="date"
+              required
+              value={dataVencimento}
+              onChange={(e) => setDataVencimento(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono"
+            />
           </div>
 
           {/* Observações */}

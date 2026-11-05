@@ -89,4 +89,55 @@ describe('Modal Dimension & Viewport Validation', () => {
     expect(deveExibirBadgeParcelas('parcelada', 12)).toBe(true);
     expect(deveExibirBadgeParcelas('parcelada', 1)).toBe(false);
   });
+
+  it('valida que contas recorrentes e únicas NUNCA são classificadas como Porquinho', () => {
+    function verificarSeEhEconomia(conta: {
+      tipo_conta?: string;
+      categoria_nome?: string;
+      observacoes?: string | null;
+      conta_descricao?: string;
+    }): boolean {
+      return (
+        conta.tipo_conta === 'parcelada' &&
+        (Boolean(conta.observacoes?.includes('Porquinho')) ||
+          conta.conta_descricao?.toLowerCase().includes('porquinho') ||
+          conta.conta_descricao?.toLowerCase() === 'economia')
+      );
+    }
+
+    // Caso real relatado pelo usuário: conta recorrente 'medico'
+    expect(
+      verificarSeEhEconomia({
+        tipo_conta: 'recorrente',
+        conta_descricao: 'medico',
+        categoria_nome: 'Economias',
+      })
+    ).toBe(false);
+
+    // Conta única de farmácia
+    expect(
+      verificarSeEhEconomia({
+        tipo_conta: 'unica',
+        conta_descricao: 'farmacia',
+        categoria_nome: 'Economias',
+      })
+    ).toBe(false);
+
+    // Porquinho legítimo criado pelo modal do Porquinho
+    expect(
+      verificarSeEhEconomia({
+        tipo_conta: 'parcelada',
+        conta_descricao: 'economia',
+        observacoes: 'Porquinho - Meta de economia parcelada',
+      })
+    ).toBe(true);
+
+    expect(
+      verificarSeEhEconomia({
+        tipo_conta: 'parcelada',
+        conta_descricao: 'Viagem dos sonhos',
+        observacoes: 'Porquinho - Meta de economia parcelada',
+      })
+    ).toBe(true);
+  });
 });

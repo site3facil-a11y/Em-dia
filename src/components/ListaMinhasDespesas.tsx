@@ -72,9 +72,13 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
 
   const isPago = p.status === 'pago';
   const isAtrasado = p.status === 'atrasado';
+  // Um item só é Porquinho se for especificamente uma conta parcelada criada para meta/porquinho.
+  // Contas recorrentes e contas únicas NUNCA são tratadas como Porquinho.
   const isEconomia =
-    p.categoria_nome?.toLowerCase().includes('poupança') ||
-    p.categoria_nome?.toLowerCase().includes('economia');
+    p.tipo_conta === 'parcelada' &&
+    (Boolean(p.observacoes?.includes('Porquinho')) ||
+      p.conta_descricao?.toLowerCase().includes('porquinho') ||
+      p.conta_descricao?.toLowerCase() === 'economia');
 
   const ACTION_WIDTH = 140; // largura dos botões combinados (Editar + Excluir)
   const LOCK_THRESHOLD = 56; // ~40% da largura dos botões para travar aberto
