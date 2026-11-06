@@ -588,6 +588,10 @@ export default function App() {
                     setModalLembretesHojeAberto(true);
                   });
                 }}
+                onAtualizacaoEncontrada={(res) => {
+                  setAvisoAtualizacao(res);
+                  setReleaseAtualizacao(res.release);
+                }}
               />
             </div>
           )}

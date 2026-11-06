@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { compararVersoes } from '../src/utils/versao';
-import { checarAtualizacaoAuto, adiarAvisoAtualizacao } from '../src/utils/autoUpdater';
+import { checarAtualizacaoAuto, adiarAvisoAtualizacao, limparIntervaloChecagem } from '../src/utils/autoUpdater';
 
 describe('compararVersoes e validação de releases', () => {
   it('deve comparar versões semânticas corretamente com ou sem prefixo v', () => {
@@ -273,5 +273,50 @@ describe('compararVersoes e validação de releases', () => {
       expect(resultado?.isDadosMoveis).toBe(true);
       expect(resultado?.tamanhoFormatado).toBe('4.3 MB');
     });
+
+    it('deve limpar o intervalo de checagem com limparIntervaloChecagem', () => {
+      const storage = criarMockStorage({
+        ultima_checagem_atualizacao_auto: '1700000000000',
+      });
+      limparIntervaloChecagem(storage as any);
+      expect(storage.getItem('ultima_checagem_atualizacao_auto')).toBe('0');
+    });
+
+    it('deve suprimir aviso apenas se a versão falha for a mesma da nova versão', async () => {
+      const agora = 1700000000000;
+      const mockFetch = async () => ({
+        ok: true,
+        json: async () => ({ version: '1.0.30', url: 'https://example.com/dist.zip' }),
+      } as any);
+
+      // 1. Falha registrada especificamente para a versão 1.0.30 -> deve suprimir
+      const storageMesmaFalha = criarMockStorage({
+        versao_atualizacao_falha: '1.0.30',
+        ultima_checagem_atualizacao_auto: '0',
+      });
+      const resFalha = await checarAtualizacaoAuto({
+        versaoAtual: '1.0.29',
+        storage: storageMesmaFalha,
+        fetchFn: mockFetch,
+        agora,
+      });
+      expect(resFalha).toBeNull();
+
+      // 2. Falha registrada para uma versão antiga 1.0.28, mas agora há a 1.0.30 -> deve alertar!
+      const storageOutraFalha = criarMockStorage({
+        versao_atualizacao_falha: '1.0.28',
+        ultima_checagem_atualizacao_auto: '0',
+      });
+      const resOutra = await checarAtualizacaoAuto({
+        versaoAtual: '1.0.29',
+        storage: storageOutraFalha,
+        fetchFn: mockFetch,
+        agora,
+      });
+      expect(resOutra).not.toBeNull();
+      expect(resOutra?.temAtualizacao).toBe(true);
+      expect(resOutra?.versao).toBe('1.0.30');
+    });
   });
 });
+

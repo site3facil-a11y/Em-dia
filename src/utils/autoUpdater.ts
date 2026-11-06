@@ -81,6 +81,17 @@ export function foiAdiadoRecentemente(
   return agora < adiarTimestamp;
 }
 
+/**
+ * Remove a trava de 6 horas para permitir uma nova checagem imediata.
+ */
+export function limparIntervaloChecagem(storage?: StorageSimples): void {
+  const store = storage || (typeof localStorage !== 'undefined' ? localStorage : undefined);
+  if (!store) return;
+  try {
+    store.setItem('ultima_checagem_atualizacao_auto', '0');
+  } catch {}
+}
+
 export interface ChecarAtualizacaoParams {
   versaoAtual?: string;
   nativeBuildAtual?: number;
@@ -98,14 +109,14 @@ export interface ChecarAtualizacaoParams {
  * 2. Sem internet (navigator.onLine === false), pula na hora sem erro.
  * 3. Se online, faz fetch com AbortController de 4s. Erro/timeout é ignorado silenciosamente.
  * 4. Respeita intervalo de 6h (salva hora em localStorage).
- * 5. Se houver falha prévia de inicialização (init_falhas > 0 ou versao_falha), não exibe na abertura.
+ * 5. Se a última tentativa de atualização falhou (init_falhas > 0 ou versao_falha), não exibe para essa mesma versão.
  * 6. Se o nativeBuild for maior, sinaliza exigeNovoApk = true (sem oferecer download).
  */
 export async function checarAtualizacaoAuto(
   params: ChecarAtualizacaoParams = {}
 ): Promise<ResultadoChecagemAtualizacao | null> {
   const {
-    versaoAtual = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.30',
+    versaoAtual = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.29',
     nativeBuildAtual = typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3,
     ignorarIntervalo = false,
     fetchFn = typeof fetch !== 'undefined' ? fetch : undefined,
@@ -124,13 +135,15 @@ export async function checarAtualizacaoAuto(
     return null;
   }
 
-  // 2. Segurança: se a última tentativa falhou (init_falhas > 0), não exibe aviso na abertura
-  const initFalhas = parseInt(storage.getItem('init_falhas') || '0', 10);
-  if (!ignorarIntervalo && initFalhas > 0) {
-    return null;
+  // 2. Frequência: só consulta novamente após 6 horas (reseta se a versão instalada anterior for diferente)
+  const versaoAnterior = storage.getItem('versao_instalada_anterior');
+  if (versaoAnterior && versaoAnterior !== versaoAtual) {
+    storage.setItem('versao_instalada_anterior', versaoAtual);
+    storage.setItem('ultima_checagem_atualizacao_auto', '0');
+  } else if (!versaoAnterior) {
+    storage.setItem('versao_instalada_anterior', versaoAtual);
   }
 
-  // 3. Frequência: só consulta novamente após 6 horas
   if (!ignorarIntervalo) {
     const ultimaChecagem = parseInt(storage.getItem('ultima_checagem_atualizacao_auto') || '0', 10);
     if (agora - ultimaChecagem < INTERVALO_CHECAGEM_AUTO_MS) {
@@ -174,10 +187,20 @@ export async function checarAtualizacaoAuto(
       return null; // Não há versão superior
     }
 
-    // Se essa versão foi marcada como falha anteriormente, não exibe aviso na abertura
+    // Se a última tentativa de atualização falhou para esta mesma versão (init_falhas > 0 ou versão marcada como falha),
+    // não exibe o aviso na abertura para essa mesma versão (Item 6)
+    const initFalhas = parseInt(storage.getItem('init_falhas') || '0', 10);
     const versaoFalha = storage.getItem('versao_atualizacao_falha') || storage.getItem('versao_falha');
-    if (!ignorarIntervalo && versaoFalha === novaVersao) {
-      return null;
+    const versaoEmAtualizacao = storage.getItem('versao_em_atualizacao');
+    const falhaRegistrada = initFalhas > 0 || storage.getItem('ultima_atualizacao_falhou') === 'true';
+
+    if (!ignorarIntervalo) {
+      if (versaoFalha === novaVersao) {
+        return null;
+      }
+      if (falhaRegistrada && versaoEmAtualizacao === novaVersao) {
+        return null;
+      }
     }
 
     // Se o usuário selecionou 'Depois' para esta versão nas últimas 24h, respeita o adiamento

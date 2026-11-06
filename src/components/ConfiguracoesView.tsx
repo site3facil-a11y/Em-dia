@@ -56,6 +56,11 @@ import {
   reagendarNotificacoes,
 } from '../utils/lembretes';
 import { exportarOuCompartilharArquivo } from '../utils/fileExport';
+import {
+  checarAtualizacaoAuto,
+  limparIntervaloChecagem,
+  ResultadoChecagemAtualizacao,
+} from '../utils/autoUpdater';
 
 interface ConfiguracoesViewProps {
   darkMode?: boolean;
@@ -66,12 +71,14 @@ interface ConfiguracoesViewProps {
   totalCategorias?: number;
   onCriarPorquinho?: () => void;
   onAbrirLembretesHoje?: () => void;
+  onAtualizacaoEncontrada?: (res: ResultadoChecagemAtualizacao) => void;
 }
 
 export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   onDadosModificados,
   onCriarPorquinho,
   onAbrirLembretesHoje,
+  onAtualizacaoEncontrada,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -290,7 +297,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     }
   };
 
-  // Verificar Atualização no GitHub com Mensagens Separadas (Item 7)
+  // Verificar Atualização no GitHub com Mensagens Separadas (Item 7 e Item 4)
   const handleVerificarAtualizacao = async () => {
     setErro(null);
     setMensagemSucesso(null);
@@ -302,108 +309,29 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
     try {
       setVerificandoAtualizacao(true);
-      let dadosAtualizacao: ReleaseInfo | null = null;
-      let falhaPages = false;
+      limparIntervaloChecagem();
 
-      // 1. Consulta ao GitHub Pages com timestamp contra cache (sem headers customizados para evitar preflight OPTIONS 405)
-      try {
-        const urlPages = `https://site3facil-a11y.github.io/Em-dia/version.json?t=${Date.now()}`;
-        const resPages = await fetch(urlPages);
+      const resultado = await checarAtualizacaoAuto({
+        versaoAtual: __APP_VERSION__,
+        nativeBuildAtual: typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3,
+        ignorarIntervalo: true,
+      });
 
-        if (resPages.ok) {
-          const jsonPages = await resPages.json();
-          if (jsonPages?.version && jsonPages?.url) {
-            dadosAtualizacao = {
-              version: String(jsonPages.version),
-              url: String(jsonPages.url),
-              checksum: jsonPages.checksum ? String(jsonPages.checksum) : undefined,
-              size: typeof jsonPages.size === 'number' ? jsonPages.size : undefined,
-              notes: jsonPages.notes ? String(jsonPages.notes) : undefined,
-              nativeBuild: typeof jsonPages.nativeBuild === 'number' ? jsonPages.nativeBuild : undefined,
-              nomeArquivo: jsonPages.url.split('/').pop()?.split('?')[0] || 'dist.zip',
-              tag_name: String(jsonPages.version),
-              name: `Versão ${jsonPages.version}`,
-              body: jsonPages.notes,
-            };
-          } else {
-            falhaPages = true;
-          }
-        } else {
-          falhaPages = true;
-        }
-      } catch (errPages) {
-        console.warn('Consulta ao GitHub Pages falhou:', errPages);
-        falhaPages = true;
-      }
+      if (resultado && resultado.temAtualizacao) {
+        onAtualizacaoEncontrada?.(resultado);
+        setReleaseEncontrada(resultado.release);
+        setModalAtualizacaoAberto(true);
 
-      // 4. Se a consulta ao Pages falhar, usa reserva: API do GitHub Releases
-      if (falhaPages || !dadosAtualizacao) {
-        try {
-          const resGithub = await fetch('https://api.github.com/repos/site3facil-a11y/Em-dia/releases/latest', {
-            headers: {
-              Accept: 'application/vnd.github.v3+json',
-            },
-          });
-
-          if (resGithub.ok) {
-            const releaseData = await resGithub.json();
-            const tag = releaseData.tag_name || '';
-            const tagSemV = tag.replace(/^v/, '');
-            const assetZip = releaseData.assets?.find(
-              (a: any) => a.name?.toLowerCase() === 'dist.zip'
-            );
-            if (assetZip && assetZip.browser_download_url) {
-              // No Android, a URL do GitHub Releases sofre redirecionamento 302 que falha no plugin.
-              // O GitHub Pages disponibiliza o arquivo estático direto sem redirecionamento.
-              const urlPagesDireta = `https://site3facil-a11y.github.io/Em-dia/dist-${tagSemV}.zip`;
-              dadosAtualizacao = {
-                version: tag,
-                url: urlPagesDireta,
-                size: assetZip.size,
-                notes: releaseData.body,
-                nomeArquivo: `dist-${tagSemV}.zip`,
-                tag_name: releaseData.tag_name,
-                name: releaseData.name,
-                body: releaseData.body,
-                assets: releaseData.assets,
-              };
-            }
-          }
-        } catch (errGithub) {
-          console.warn('Consulta reserva ao GitHub Releases também falhou:', errGithub);
-        }
-      }
-
-      // 6. Mensagens de erro caso não seja possível consultar
-      if (!dadosAtualizacao) {
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          setErro('Sem conexão com a internet');
-        } else {
-          setErro('Não foi possível consultar as atualizações');
+        if (resultado.exigeNovoApk) {
+          setErro(
+            `Esta atualização exige instalar o APK mais recente (versão ${resultado.versao}).`
+          );
         }
         return;
       }
 
-      // 2. Compare version com a versão atual de forma semântica
-      const tag = dadosAtualizacao.version;
-      const comparacao = compararVersoes(tag, __APP_VERSION__);
-      if (comparacao > 0) {
-        // Item 6: se o nativeBuild do release for MAIOR que o do app instalado, não baixe;
-        // mostre "Esta atualização exige instalar o APK mais recente" e a versão necessária. Se for igual, ofereça normalmente
-        const appNativeBuild = typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3;
-        const releaseNativeBuild = dadosAtualizacao.nativeBuild;
-        if (typeof releaseNativeBuild === 'number' && releaseNativeBuild > appNativeBuild) {
-          setErro(`Esta atualização exige instalar o APK mais recente (versão ${tag}, build nativo ${releaseNativeBuild}). A versão atual possui build nativo ${appNativeBuild}.`);
-          setReleaseEncontrada(dadosAtualizacao);
-          setModalAtualizacaoAberto(true);
-          return;
-        }
-
-        setReleaseEncontrada(dadosAtualizacao);
-        setModalAtualizacaoAberto(true);
-      } else {
-        notificarSucesso('Você já está na versão mais recente');
-      }
+      // Se não encontrou versão superior via checagem semântica
+      notificarSucesso(`Você já está na versão mais recente (${__APP_VERSION__})`);
     } catch (err: any) {
       console.error('Erro ao verificar atualizações:', err);
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
