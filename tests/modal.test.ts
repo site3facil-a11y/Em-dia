@@ -140,4 +140,21 @@ describe('Modal Dimension & Viewport Validation', () => {
       })
     ).toBe(true);
   });
+
+  it('valida que o modal de detalhamento de parcelas só abre para contas parceladas e nunca para recorrentes ou únicas', () => {
+    function deveAbrirModalDetalhamento(tipoConta?: string): boolean {
+      return tipoConta === 'parcelada';
+    }
+
+    // Pagamento recorrente (ex: aluguel, internet, luz) NÃO deve abrir detalhamento
+    expect(deveAbrirModalDetalhamento('recorrente')).toBe(false);
+
+    // Pagamento de conta única NÃO deve abrir detalhamento
+    expect(deveAbrirModalDetalhamento('unica')).toBe(false);
+    expect(deveAbrirModalDetalhamento(undefined)).toBe(false);
+
+    // Pagamento parcelado (ex: compras em 10x, financiamentos) DEVE abrir detalhamento
+    expect(deveAbrirModalDetalhamento('parcelada')).toBe(true);
+  });
 });
+

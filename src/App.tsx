@@ -368,7 +368,15 @@ export default function App() {
 
   const handleVerDetalhesConta = async (contaId: number) => {
     const todas = await listarParcelas({ ordenacao: 'vencimento_asc' });
-    setDetalhesContaParcelas(todas.filter((p) => p.conta_id === contaId));
+    const parcelasConta = todas.filter((p) => p.conta_id === contaId);
+    if (!parcelasConta.length) return;
+
+    // Detalhamento de parcelas é EXCLUSIVO para contas parceladas (não abre para recorrentes nem únicas)
+    if (parcelasConta[0].tipo_conta !== 'parcelada') {
+      return;
+    }
+
+    setDetalhesContaParcelas(parcelasConta);
   };
 
   const handleEditarConta = (contaId: number) => {

@@ -24,7 +24,7 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   onPagarParcela,
   onDesfazerPagamento,
 }) => {
-  if (!aberto || parcelas.length === 0) return null;
+  if (!aberto || parcelas.length === 0 || parcelas[0]?.tipo_conta !== 'parcelada') return null;
 
   const primeira = parcelas[0];
   const [lembreteAtivo, setLembreteAtivo] = useState(() => temLembrete(primeira.conta_id));

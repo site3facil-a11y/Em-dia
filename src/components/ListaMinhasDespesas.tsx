@@ -244,8 +244,13 @@ const ItemDespesaSwipeable: React.FC<ItemDespesaSwipeableProps> = ({
             <div
               onClick={(e) => {
                 e.stopPropagation();
-                if (estaAberto) onFechar();
-                else onVerDetalhes(p.conta_id);
+                if (estaAberto) {
+                  onFechar();
+                } else if (p.tipo_conta === 'parcelada') {
+                  onVerDetalhes(p.conta_id);
+                } else {
+                  onAbrir();
+                }
               }}
               className="cursor-pointer min-w-0 flex-1"
             >
