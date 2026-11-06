@@ -99,6 +99,14 @@ describe('Integridade Financeira em Centavos', () => {
       expect(res.parcelasCentavos.reduce((a, b) => a + b, 0)).toBe(100000);
     });
 
+    it('parcelamento de compras com valor total informado: tablet de R$ 500 em 5x gera 5 parcelas de R$ 100', () => {
+      // Caso real do usuário: tablet R$ 500 no total em 5 vezes
+      const parcelasTablet = dividirEmParcelas(parseMoedaParaCentavos('500'), 5);
+      expect(parcelasTablet).toHaveLength(5);
+      expect(parcelasTablet).toEqual([10000, 10000, 10000, 10000, 10000]);
+      expect(parcelasTablet.reduce((a, b) => a + b, 0)).toBe(50000);
+    });
+
     it('faz parser correto de separadores de milhar brasileiros sem vírgula (ex: 1.000 e 1.200)', () => {
       expect(parseMoedaParaCentavos('1.000')).toBe(100000);
       expect(parseMoedaParaCentavos('1.200')).toBe(120000);

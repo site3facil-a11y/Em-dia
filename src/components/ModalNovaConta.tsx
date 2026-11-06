@@ -3,7 +3,7 @@ import { X, PlusCircle, AlertCircle, Calendar, Layers, Repeat, Bell } from 'luci
 import { Categoria, TipoConta } from '../types';
 import { NovaContaInput } from '../db/repository';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
-import { parseMoedaParaCentavos } from '../utils/finance';
+import { parseMoedaParaCentavos, dividirEmParcelas } from '../utils/finance';
 import { definirLembrete } from '../utils/lembretes';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
@@ -26,6 +26,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const [descricao, setDescricao] = useState('');
   const [valorTotalStr, setValorTotalStr] = useState('');
   const [tipo, setTipo] = useState<TipoConta>('unica');
+  const [modoValorParcelado, setModoValorParcelado] = useState<'total' | 'parcela'>('total');
   const [numeroParcelas, setNumeroParcelas] = useState<string>('');
   const [frequencia, setFrequencia] = useState<'mensal' | 'anual' | 'semanal' | 'quinzenal'>('mensal');
   const [dataVencimento, setDataVencimento] = useState(getHojeString());
@@ -44,6 +45,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
     setDescricao('');
     setValorTotalStr('');
     setTipo('unica');
+    setModoValorParcelado('total');
     setNumeroParcelas('');
     setFrequencia('mensal');
     setDataVencimento(getHojeString());
@@ -73,11 +75,22 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
   const valorDigitadoCentavos = parseMoedaParaCentavos(valorTotalStr);
   const parcelasNum = parseInt(String(numeroParcelas).trim(), 10) || 0;
 
-  // Em conta parcelada, o total = valor da parcela × número de parcelas
-  const valorTotalCentavos =
-    tipo === 'parcelada' && parcelasNum > 0
-      ? valorDigitadoCentavos * parcelasNum
-      : valorDigitadoCentavos;
+  // Em conta parcelada:
+  // - Modo 'total': valor digitado é o total da compra (ex: tablet R$ 500 em 5x = 5 parcelas de R$ 100)
+  // - Modo 'parcela': valor digitado é o valor da parcela (ex: 5x de R$ 100 = total R$ 500)
+  let valorTotalCentavos = valorDigitadoCentavos;
+  let valorParcelaCentavos = valorDigitadoCentavos;
+
+  if (tipo === 'parcelada' && parcelasNum > 0) {
+    if (modoValorParcelado === 'total') {
+      valorTotalCentavos = valorDigitadoCentavos;
+      const parcs = dividirEmParcelas(valorTotalCentavos, parcelasNum);
+      valorParcelaCentavos = parcs[0] || 0;
+    } else {
+      valorParcelaCentavos = valorDigitadoCentavos;
+      valorTotalCentavos = valorDigitadoCentavos * parcelasNum;
+    }
+  }
 
   // Sugestão em tempo real quando o usuário digita número puro (ex: "19" sugere "19,00")
   const sugestaoFormatada =
@@ -143,7 +156,8 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
         data_primeiro_vencimento: dataVencimento,
         numero_parcelas: tipo === 'parcelada' ? parcelasNum : (tipo === 'recorrente' ? (frequencia === 'anual' ? 5 : 12) : 1),
         frequencia_recorrencia: tipo === 'recorrente' ? frequencia : undefined,
-        valor_parcela: tipo === 'parcelada' ? valorDigitadoCentavos / 100 : undefined,
+        modo_valor_parcelado: tipo === 'parcelada' ? modoValorParcelado : undefined,
+        valor_parcela: tipo === 'parcelada' ? valorParcelaCentavos / 100 : undefined,
       });
 
       if (typeof novoId === 'number' && novoId > 0 && lembreteAtivo) {
@@ -255,13 +269,48 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
             />
           </div>
 
+          {/* Seletor Claro de Total vs Parcela */}
+          {tipo === 'parcelada' && (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                Informar valor como:
+              </label>
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setModoValorParcelado('total')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                    modoValorParcelado === 'total'
+                      ? 'bg-blue-600 text-white shadow-xs font-extrabold'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
+                  }`}
+                >
+                  Valor Total da Compra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModoValorParcelado('parcela')}
+                  className={`py-2 px-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                    modoValorParcelado === 'parcela'
+                      ? 'bg-blue-600 text-white shadow-xs font-extrabold'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700/60'
+                  }`}
+                >
+                  Valor de Cada Parcela
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Linha: Valor e Data de Vencimento */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Valor */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 {tipo === 'parcelada'
-                  ? 'Valor da parcela (R$) *'
+                  ? modoValorParcelado === 'total'
+                    ? 'Valor Total da Compra (R$) *'
+                    : 'Valor da Parcela (R$) *'
                   : 'Valor (R$) *'}
               </label>
               <div className="relative">
@@ -339,9 +388,9 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
                     : 'border-blue-200 dark:border-slate-700 focus:ring-blue-600'
                 }`}
               />
-              <p className="text-[11px] text-blue-800/80 dark:text-blue-300">
+              <p className="text-[11px] text-blue-800/80 dark:text-blue-300 font-medium">
                 {parcelasNum >= 2 && parcelasNum <= 120 && valorDigitadoCentavos > 0 && String(numeroParcelas).trim() !== ''
-                  ? `${parcelasNum} parcelas de ${formatarMoeda(valorDigitadoCentavos)} (total ${formatarMoeda(valorTotalCentavos)}), a partir de ${formatarData(dataVencimento)}`
+                  ? `${parcelasNum} parcelas de ${formatarMoeda(valorParcelaCentavos)} (total ${formatarMoeda(valorTotalCentavos)}), a partir de ${formatarData(dataVencimento)}`
                   : 'Preencha o valor e o número de parcelas'}
               </p>
             </div>

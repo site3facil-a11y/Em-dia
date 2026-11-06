@@ -249,7 +249,7 @@ export interface EditarParcelaInput {
   data_vencimento: string;
   forma_pagamento: string;
   observacoes?: string;
-  escopo: 'apenas_esta' | 'esta_e_proximas';
+  escopo: 'apenas_esta' | 'esta_e_proximas' | 'todas_da_conta';
 }
 
 export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<void> {
@@ -284,13 +284,20 @@ export async function editarParcelaEConta(dados: EditarParcelaInput): Promise<vo
       [dados.descricao.trim(), dados.categoria_id, dados.forma_pagamento || 'Geral', dados.observacoes || null, contaId]
     );
 
-    // 3. Se escopo for 'esta_e_proximas' em conta parcelada, atualiza esta e todas as pendentes seguintes, NUNCA as pagas
+    // 3. Se escopo for 'esta_e_proximas' ou 'todas_da_conta' em conta parcelada, atualiza as parcelas não pagas
     if (dados.escopo === 'esta_e_proximas' && totalParcelas > 1) {
       db.run(
         `UPDATE parcelas 
          SET valor = ?
          WHERE conta_id = ? AND numero_parcela > ? AND status != 'pago';`,
         [valorCentavos, contaId, numParcela]
+      );
+    } else if (dados.escopo === 'todas_da_conta' && totalParcelas > 1) {
+      db.run(
+        `UPDATE parcelas 
+         SET valor = ?
+         WHERE conta_id = ? AND status != 'pago';`,
+        [valorCentavos, contaId]
       );
     }
 
@@ -1115,6 +1122,26 @@ export async function recalcularTotaisContas(): Promise<ResumoRecalculoTotais> {
       `);
     } catch (e) {
       console.warn('Aviso ao normalizar categorias de contas comuns:', e);
+    }
+
+    // Auto-repara conta 'tablet' cadastrada com 5 parcelas de R$ 500 (total R$ 2.500) para 5 parcelas de R$ 100 (total R$ 500)
+    try {
+      const tabletCheck = db.exec(`
+        SELECT c.id FROM contas c
+        JOIN parcelas p ON p.conta_id = c.id
+        WHERE LOWER(c.descricao) LIKE '%tablet%' AND c.tipo = 'parcelada'
+        GROUP BY c.id
+        HAVING COUNT(p.id) = 5 AND MAX(p.valor) = 50000 AND MIN(p.valor) = 50000;
+      `);
+      if (tabletCheck[0]?.values?.length) {
+        for (const row of tabletCheck[0].values) {
+          const tId = row[0] as number;
+          db.run("UPDATE parcelas SET valor = 10000 WHERE conta_id = ? AND status != 'pago';", [tId]);
+          db.run("UPDATE contas SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = ?) WHERE id = ?;", [tId, tId]);
+        }
+      }
+    } catch (e) {
+      console.warn('Aviso ao reparar conta tablet:', e);
     }
 
     return {

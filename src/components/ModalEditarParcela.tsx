@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, Edit3, AlertCircle, Info, Calendar, Bell } from 'lucide-react';
 import { Categoria, Parcela } from '../types';
 import { EditarParcelaInput } from '../db/repository';
-import { parseMoedaParaCentavos } from '../utils/finance';
+import { parseMoedaParaCentavos, formatarCentavos } from '../utils/finance';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 import {
   temLembrete,
@@ -31,7 +31,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
   const [formaPagamento, setFormaPagamento] = useState('Geral');
   const [observacoes, setObservacoes] = useState('');
   const [lembreteAtivo, setLembreteAtivo] = useState(false);
-  const [escopo, setEscopo] = useState<'apenas_esta' | 'esta_e_proximas'>('esta_e_proximas');
+  const [escopo, setEscopo] = useState<'apenas_esta' | 'esta_e_proximas' | 'todas_da_conta'>('todas_da_conta');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -45,8 +45,8 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
     setFormaPagamento(p.forma_pagamento || 'Geral');
     setObservacoes(p.observacoes || '');
     setLembreteAtivo(temLembrete(p.conta_id));
-    // Opção padrão na edição: sempre 'esta_e_proximas' (Item 1)
-    setEscopo('esta_e_proximas');
+    // Opção padrão na edição de parceladas: 'todas_da_conta' para permitir corrigir o valor de uma vez
+    setEscopo(p.tipo_conta === 'parcelada' ? 'todas_da_conta' : 'esta_e_proximas');
     setErro(null);
     setSalvando(false);
   }, [categorias]);
@@ -233,6 +233,11 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
                   💡 Sugerir: R$ {sugestaoFormatada}
                 </button>
               )}
+              {isParcelada && valorCentavos > 0 && (
+                <p className="mt-1 text-[11px] text-blue-700 dark:text-blue-300 font-medium">
+                  {parcela.total_parcelas} parcelas de {formatarCentavos(valorCentavos)} (Total {formatarCentavos(valorCentavos * parcela.total_parcelas)})
+                </p>
+              )}
             </div>
 
             {/* Número de Parcelas (somente para contas parceladas) */}
@@ -338,6 +343,44 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
               </label>
 
               <div className="space-y-1.5">
+                {isParcelada && (
+                  <label className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-white/60 dark:hover:bg-slate-900/60 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="escopo"
+                      checked={escopo === 'todas_da_conta'}
+                      onChange={() => setEscopo('todas_da_conta')}
+                      className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                        Aplicar a TODAS as parcelas da conta (1 a {parcela.total_parcelas})
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Atualiza todas as parcelas não pagas (ideal para corrigir o valor total da conta).
+                      </span>
+                    </div>
+                  </label>
+                )}
+
+                <label className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-white/60 dark:hover:bg-slate-900/60 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="escopo"
+                    checked={escopo === 'esta_e_proximas'}
+                    onChange={() => setEscopo('esta_e_proximas')}
+                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                      Aplicar a esta e às próximas
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Atualiza o valor das parcelas futuras. <em>Parcelas já pagas nunca são alteradas.</em>
+                    </span>
+                  </div>
+                </label>
+
                 <label className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-white/60 dark:hover:bg-slate-900/60 cursor-pointer">
                   <input
                     type="radio"
@@ -356,24 +399,6 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
                       {isParcelada
                         ? 'As outras parcelas da conta permanecerão inalteradas.'
                         : 'Os próximos pagamentos permanecerão inalterados.'}
-                    </span>
-                  </div>
-                </label>
-
-                <label className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-white/60 dark:hover:bg-slate-900/60 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="escopo"
-                    checked={escopo === 'esta_e_proximas'}
-                    onChange={() => setEscopo('esta_e_proximas')}
-                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      Aplicar a esta e às próximas
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Atualiza o valor das parcelas futuras. <em>Parcelas já pagas nunca são alteradas.</em>
                     </span>
                   </div>
                 </label>

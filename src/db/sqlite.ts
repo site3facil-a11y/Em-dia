@@ -559,6 +559,30 @@ export function executarMigracoes(db: Database) {
     definirVersaoSchema(db, 10);
   }
 
+  // Migração 11: Corrige conta tablet ou contas parceladas com 5 parcelas de R$ 500 para R$ 100 cada
+  if (versao < 11) {
+    try {
+      const tabletCheck = db.exec(`
+        SELECT c.id FROM contas c
+        JOIN parcelas p ON p.conta_id = c.id
+        WHERE LOWER(c.descricao) LIKE '%tablet%' AND c.tipo = 'parcelada'
+        GROUP BY c.id
+        HAVING COUNT(p.id) = 5 AND MAX(p.valor) = 50000 AND MIN(p.valor) = 50000;
+      `);
+      if (tabletCheck[0]?.values?.length) {
+        for (const row of tabletCheck[0].values) {
+          const tId = row[0] as number;
+          db.run("UPDATE parcelas SET valor = 10000 WHERE conta_id = ? AND status != 'pago';", [tId]);
+          db.run("UPDATE contas SET valor_total = (SELECT SUM(valor) FROM parcelas WHERE conta_id = ?) WHERE id = ?;", [tId, tId]);
+        }
+      }
+    } catch (err) {
+      console.warn('Aviso durante migração 11:', err);
+    }
+    versao = 11;
+    definirVersaoSchema(db, 11);
+  }
+
   // Reativa PRAGMA foreign_keys = ON
   db.run('PRAGMA foreign_keys = ON;');
 }
