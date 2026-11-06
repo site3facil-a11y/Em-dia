@@ -105,7 +105,7 @@ export async function checarAtualizacaoAuto(
   params: ChecarAtualizacaoParams = {}
 ): Promise<ResultadoChecagemAtualizacao | null> {
   const {
-    versaoAtual = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.29',
+    versaoAtual = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.30',
     nativeBuildAtual = typeof __NATIVE_BUILD__ === 'number' ? __NATIVE_BUILD__ : 3,
     ignorarIntervalo = false,
     fetchFn = typeof fetch !== 'undefined' ? fetch : undefined,
