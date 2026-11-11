@@ -22,11 +22,26 @@ workflows:
           xcode-project use-profiles || echo "Perfis não encontrados no momento, continuando com configuração padrão do Xcode..."
       - name: Compilar IPA (iOS)
         script: |
-          xcode-project build-ipa \
-            --project "ios/App/App.xcodeproj" \
-            --scheme "App"
+          # Tenta gerar o IPA assinado caso perfis da Apple estejam cadastrados no Codemagic
+          if xcode-project build-ipa --project "ios/App/App.xcodeproj" --scheme "App"; then
+            echo "IPA assinado com sucesso!"
+          else
+            echo "Sem perfil Apple configurado. Compilando pacote de distribuição sem assinatura..."
+            xcodebuild archive \
+              -project "ios/App/App.xcodeproj" \
+              -scheme "App" \
+              -archivePath "build/ios/xcarchive/App.xcarchive" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=""
+
+            mkdir -p "build/ios/ipa"
+            cd build/ios/xcarchive
+            zip -r "../ipa/Em-dia-unsigned-archive.zip" App.xcarchive
+          fi
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/ipa/*.zip
       - /tmp/xcodebuild_logs/*.log
     publishing:
       email:
