@@ -5,7 +5,8 @@ import { formatarMoeda, formatarData, getStatusInfo } from '../utils/formatters'
 import { BarraProgressoVencimento } from './BarraProgressoVencimento';
 import {
   temLembrete,
-  alternarLembrete,
+  definirLembrete,
+  ativarLembreteConta,
   reagendarNotificacoes,
 } from '../utils/lembretes';
 import { ModalBase } from './ModalBase';
@@ -39,9 +40,16 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   if (!aberto || !primeira || primeira.tipo_conta !== 'parcelada') return null;
 
   const handleToggleLembrete = () => {
-    const novo = alternarLembrete(primeira.conta_id);
+    const novo = !lembreteAtivo;
     setLembreteAtivo(novo);
-    reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: novo }).catch(() => {});
+    if (novo) {
+      ativarLembreteConta(primeira.conta_id, primeira.conta_descricao, {
+        emitirToast: true,
+      }).catch(() => {});
+    } else {
+      definirLembrete(primeira.conta_id, false);
+      reagendarNotificacoes().catch(() => {});
+    }
   };
 
   const totalConta = parcelas.reduce((acc, p) => acc + p.valor, 0);

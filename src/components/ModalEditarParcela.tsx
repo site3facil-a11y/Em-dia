@@ -7,7 +7,7 @@ import { ModalBase, ModalBotoesRodape } from './ModalBase';
 import {
   temLembrete,
   definirLembrete,
-  reagendarNotificacoes,
+  ativarLembreteConta,
 } from '../utils/lembretes';
 
 interface ModalEditarParcelaProps {
@@ -128,7 +128,7 @@ export const ModalEditarParcela: React.FC<ModalEditarParcelaProps> = ({
         escopo: isParceladaOuRecorrente ? escopo : 'apenas_esta',
       });
       if (lembreteAtivo) {
-        await reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: true });
+        await ativarLembreteConta(parcela.conta_id, descricao.trim(), { emitirToast: true });
       }
       if (parcela) resetParaParcela(parcela);
       onFechar();

@@ -56,6 +56,8 @@ import {
   verificarPermissaoAlarmeExato,
   solicitarPermissaoAlarmeExato,
   obterQtdNotificacoesAgendadas,
+  obterNotificacoesAgendadasDetalhes,
+  ItemNotificacaoAgendadaInfo,
   dispararNotificacaoTeste,
   reagendarNotificacoes,
 } from '../utils/lembretes';
@@ -103,6 +105,8 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [statusPermissao, setStatusPermissao] = useState<StatusPermissaoLembretes>('prompt');
   const [statusAlarmeExato, setStatusAlarmeExato] = useState<StatusAlarmeExato>('unsupported');
   const [qtdNotificacoesAgendadas, setQtdNotificacoesAgendadas] = useState<number>(0);
+  const [agendamentosDetalhes, setAgendamentosDetalhes] = useState<ItemNotificacaoAgendadaInfo[]>([]);
+  const [avisoTesteImediato, setAvisoTesteImediato] = useState<string | null>(null);
   const [testandoNotificacao, setTestandoNotificacao] = useState(false);
   const [persistenciaAtiva, setPersistenciaAtiva] = useState<boolean | null>(null);
   const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
@@ -162,14 +166,19 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
 
   const atualizarDiagnosticoNotificacoes = async () => {
     if (!pluginNotificacoesDisponivel) return;
-    const [perm, exato, agendadas] = await Promise.all([
+    const [perm, exato, agendadas, detalhes] = await Promise.all([
       verificarStatusPermissao(),
       verificarPermissaoAlarmeExato(),
       obterQtdNotificacoesAgendadas(),
+      obterNotificacoesAgendadasDetalhes(),
     ]);
     setStatusPermissao(perm);
     setStatusAlarmeExato(exato);
     setQtdNotificacoesAgendadas(agendadas);
+    setAgendamentosDetalhes(detalhes);
+    if (exato === 'granted') {
+      setAvisoTesteImediato(null);
+    }
   };
 
   // Verifica status da permissão nativa, alarme exato e quantidade agendada
@@ -180,12 +189,8 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     const aoRetomar = () => {
       atualizarDiagnosticoNotificacoes();
     };
-    const aoReagendar = (e: any) => {
-      if (typeof e?.detail?.totalAgendadas === 'number') {
-        setQtdNotificacoesAgendadas(e.detail.totalAgendadas);
-      } else {
-        obterQtdNotificacoesAgendadas().then(setQtdNotificacoesAgendadas);
-      }
+    const aoReagendar = () => {
+      atualizarDiagnosticoNotificacoes();
     };
 
     window.addEventListener('em-dia-app-retomado', aoRetomar);
@@ -318,15 +323,16 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     try {
       setTestandoNotificacao(true);
       setErro(null);
+      setAvisoTesteImediato(null);
       const res = await dispararNotificacaoTeste();
       await atualizarDiagnosticoNotificacoes();
       if (res.sucesso) {
         if (res.imediata) {
-          notificarSucesso(
-            'Notificação de teste enviada agora! Para alertas no minuto exato com o app fechado, ative "Horário exato" abaixo.'
+          setAvisoTesteImediato(
+            'A notificação de teste disparou na hora porque não usa agendamento. Para que os lembretes das contas a vencer toquem no horário exato, toque em "Ativar horário exato" acima.'
           );
         } else {
-          notificarSucesso('Notificação de teste agendada para daqui a 5 segundos!');
+          notificarSucesso('Notificação de teste agendada com alarme exato para daqui a 5 segundos!');
         }
       } else {
         setErro(res.mensagem || 'Falha ao agendar teste de notificação.');
@@ -762,6 +768,26 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
             </div>
           )}
 
+          {/* Alerta persistente quando notificações estão liberadas, mas Horário Exato está bloqueado no Android 12+ */}
+          {statusPermissao === 'granted' && statusAlarmeExato === 'denied' && (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <span>Horário exato desativado no Android</span>
+              </p>
+              <p className="text-[11px] leading-relaxed">
+                O <strong>teste de notificação</strong> aparece na hora porque dispara imediatamente. Já os <strong>lembretes de contas a vencer</strong> dependem do alarme do Android: sem a permissão de <strong>Alarmes e lembretes</strong>, o sistema atrasa ou bloqueia o disparo no horário escolhido.
+              </p>
+              <button
+                type="button"
+                onClick={handleSolicitarAlarmeExato}
+                className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] shadow-xs transition-all cursor-pointer"
+              >
+                Ativar horário exato agora
+              </button>
+            </div>
+          )}
+
           {/* Opções de Configuração quando habilitado */}
           {configLembretes.habilitado && (
             <div className="space-y-3.5 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -853,10 +879,52 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                   <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                     {qtdNotificacoesAgendadas > 0
                       ? `${qtdNotificacoesAgendadas} notificação(ões) agendada(s) no Android para os próximos 45 dias.`
-                      : 'Nenhuma notificação pendente agendada para os próximos 45 dias.'}
+                      : 'Nenhuma notificação pendente agendada para os próximos 45 dias (verifique se há contas a vencer após este horário).'}
                   </p>
                 )}
+
+                {/* Lista dos próximos alertas efetivamente gravados no Android */}
+                {statusPermissao === 'granted' && agendamentosDetalhes.length > 0 && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70 space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Próximos alertas programados no aparelho:
+                    </span>
+                    {agendamentosDetalhes.slice(0, 5).map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 text-[11px] text-slate-700 dark:text-slate-300"
+                      >
+                        <span className="truncate font-medium">{item.corpo}</span>
+                        <span className="flex items-center gap-1 flex-shrink-0 font-mono text-[10px]">
+                          <span className="text-slate-500 dark:text-slate-400">
+                            {item.dataHoraFormatada}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded font-bold ${
+                              item.exato
+                                ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
+                            }`}
+                          >
+                            {item.exato ? 'Exato' : 'Aprox.'}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                    {agendamentosDetalhes.length > 5 && (
+                      <span className="text-[10px] text-slate-400 block">
+                        + {agendamentosDetalhes.length - 5} alerta(s) nas próximas datas.
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {avisoTesteImediato && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                  <strong>Teste enviado agora!</strong> {avisoTesteImediato}
+                </div>
+              )}
 
               {/* Botão Testar notificação */}
               <div className="pt-1">

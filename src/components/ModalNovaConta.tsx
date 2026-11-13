@@ -4,7 +4,7 @@ import { Categoria, TipoConta } from '../types';
 import { NovaContaInput } from '../db/repository';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
 import { parseMoedaParaCentavos, dividirEmParcelas } from '../utils/finance';
-import { definirLembrete, reagendarNotificacoes } from '../utils/lembretes';
+import { ativarLembreteConta } from '../utils/lembretes';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface ModalNovaContaProps {
@@ -161,8 +161,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
       });
 
       if (typeof novoId === 'number' && novoId > 0 && lembreteAtivo) {
-        definirLembrete(novoId, true);
-        await reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: true });
+        await ativarLembreteConta(novoId, descricao.trim(), { emitirToast: true });
       }
 
       resetForm();

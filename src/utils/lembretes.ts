@@ -21,6 +21,7 @@ const IDS_RESERVADOS_SISTEMA = new Set<number>([
 const STORAGE_KEY_LEMBRETES = 'em_dia_lembretes_contas';
 const STORAGE_KEY_CONFIG = 'em_dia_config_lembretes_vencimento';
 const STORAGE_KEY_ULTIMO_AVISO_ATRASADAS = 'em_dia_ultimo_aviso_atrasadas';
+const STORAGE_KEY_AVISOS_CONTAS_HOJE = 'em_dia_avisos_contas_hoje';
 
 export interface ConfiguracaoLembretes {
   habilitado: boolean;
@@ -42,6 +43,34 @@ export interface ResultadoNotificacaoTeste {
   imediata?: boolean;
   alarmeExatoConcedido?: boolean;
   mensagem?: string;
+}
+
+export interface ItemNotificacaoAgendadaInfo {
+  id: number;
+  titulo: string;
+  corpo: string;
+  dataHoraFormatada: string;
+  timestamp: number;
+  exato: boolean;
+}
+
+export interface CatchUpCandidato {
+  parcela: Parcela;
+  diasAntes: 0 | 1;
+  titulo: string;
+  mensagem: string;
+  chaveUnica: string;
+}
+
+export interface ResultadoAtivacaoLembrete {
+  ativado: boolean;
+  permissaoNegada: boolean;
+  alarmeExatoConcedido: boolean;
+  totalAgendadas: number;
+  agendadasConta: number;
+  proximaDataFormatada: string | null;
+  avisoImediatoEnviado: boolean;
+  mensagemUsuario: string;
 }
 
 const CONFIG_PADRAO: ConfiguracaoLembretes = {
@@ -70,6 +99,14 @@ export function formatarDataLocalIso(data: Date): string {
   const mm = String(data.getMonth() + 1).padStart(2, '0');
   const dd = String(data.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+export function formatarDataHoraCurta(data: Date): string {
+  const dd = String(data.getDate()).padStart(2, '0');
+  const mm = String(data.getMonth() + 1).padStart(2, '0');
+  const hh = String(data.getHours()).padStart(2, '0');
+  const min = String(data.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm} às ${hh}:${min}`;
 }
 
 /**
@@ -468,6 +505,157 @@ export async function obterQtdNotificacoesAgendadas(): Promise<number> {
   }
 }
 
+/**
+ * Retorna os detalhes das notificações atualmente agendadas no Android (ordenadas por data/hora),
+ * permitindo ao usuário confirmar na tela de Ajustes exatamente o que está programado.
+ */
+export async function obterNotificacoesAgendadasDetalhes(): Promise<ItemNotificacaoAgendadaInfo[]> {
+  if (!isLocalNotificationsDisponivel()) return [];
+  try {
+    const exactStatus = await verificarPermissaoAlarmeExato();
+    const alarmeExatoSistema = exactStatus === 'granted';
+
+    let lista: any[] = [];
+    if (typeof LocalNotifications.getAll === 'function') {
+      const res = await LocalNotifications.getAll({ state: 'SCHEDULED' });
+      lista = res?.notifications || [];
+    } else {
+      const pending = await LocalNotifications.getPending();
+      lista = pending?.notifications || [];
+    }
+
+    const itens: ItemNotificacaoAgendadaInfo[] = [];
+    for (const n of lista) {
+      if (!n || n.id === NOTIFICACAO_TESTE_ID || n.id === NOTIFICACAO_ATRASADAS_ID) continue;
+      const rawAt = n.schedule?.at;
+      const dataAt = rawAt ? new Date(rawAt) : null;
+      const timestamp = dataAt && !isNaN(dataAt.getTime()) ? dataAt.getTime() : 0;
+      const exato =
+        typeof n.isExactNotification === 'boolean'
+          ? n.isExactNotification && alarmeExatoSistema
+          : alarmeExatoSistema;
+
+      itens.push({
+        id: Number(n.id),
+        titulo: String(n.title || 'Vencimento de Conta'),
+        corpo: String(n.body || ''),
+        dataHoraFormatada: timestamp > 0 ? formatarDataHoraCurta(new Date(timestamp)) : 'Agendado',
+        timestamp,
+        exato,
+      });
+    }
+
+    itens.sort((a, b) => {
+      if (a.timestamp === 0 && b.timestamp === 0) return 0;
+      if (a.timestamp === 0) return 1;
+      if (b.timestamp === 0) return -1;
+      return a.timestamp - b.timestamp;
+    });
+
+    return itens;
+  } catch (err) {
+    console.warn('Erro ao obter detalhes das notificações agendadas:', err);
+    return [];
+  }
+}
+
+function lerAvisosContasHoje(hojeIso: string): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_AVISOS_CONTAS_HOJE);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Mantém apenas registros do dia atual
+    const doDia = parsed.filter((item) => typeof item === 'string' && item.endsWith(`:${hojeIso}`));
+    if (doDia.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY_AVISOS_CONTAS_HOJE, JSON.stringify(doDia));
+    }
+    return doDia;
+  } catch {
+    return [];
+  }
+}
+
+function registrarAvisoContaHoje(chaveUnica: string, hojeIso: string): void {
+  try {
+    const atuais = lerAvisosContasHoje(hojeIso);
+    if (!atuais.includes(chaveUnica)) {
+      localStorage.setItem(STORAGE_KEY_AVISOS_CONTAS_HOJE, JSON.stringify([...atuais, chaveUnica]));
+    }
+  } catch (err) {
+    console.warn('Erro ao registrar aviso diário da conta:', err);
+  }
+}
+
+/**
+ * Função pura que verifica se uma conta ativada hoje (após o horário configurado, ex: 09:00)
+ * possui parcela vencendo HOJE ou AMANHÃ cujo alerta do dia já passou sem ser disparado.
+ */
+export function identificarParcelaCatchUpHoje({
+  parcelasConta,
+  config,
+  agora = new Date(),
+  avisosJaEnviadosHoje = [],
+}: {
+  parcelasConta: Parcela[];
+  config: ConfiguracaoLembretes;
+  agora?: Date;
+  avisosJaEnviadosHoje?: string[];
+}): CatchUpCandidato | null {
+  if (!config.habilitado) return null;
+
+  const hojeIso = formatarDataLocalIso(agora);
+  const horarioHoje = calcularDataAgendamento(hojeIso, 0, config.horario);
+  // Se o horário configurado ainda não passou hoje, o agendamento normal cuidará do disparo.
+  if (agora.getTime() < horarioHoje.getTime()) {
+    return null;
+  }
+
+  const amanhaDate = new Date(agora.getTime());
+  amanhaDate.setDate(amanhaDate.getDate() + 1);
+  const amanhaIso = formatarDataLocalIso(amanhaDate);
+
+  const pendentes = parcelasConta.filter((p) => p.status !== 'pago');
+
+  if (config.antecedencia.noDia) {
+    const venceHoje = pendentes.find((p) => p.data_vencimento === hojeIso);
+    if (venceHoje) {
+      const chaveUnica = `${venceHoje.id}:0:${hojeIso}`;
+      if (!avisosJaEnviadosHoje.includes(chaveUnica)) {
+        const desc = venceHoje.conta_descricao || 'Conta';
+        const val = formatarValorTexto(venceHoje.valor);
+        return {
+          parcela: venceHoje,
+          diasAntes: 0,
+          titulo: 'Vencimento de Conta',
+          mensagem: `Vence hoje: ${desc} — R$ ${val}`,
+          chaveUnica,
+        };
+      }
+    }
+  }
+
+  if (config.antecedencia.umDiaAntes) {
+    const venceAmanha = pendentes.find((p) => p.data_vencimento === amanhaIso);
+    if (venceAmanha) {
+      const chaveUnica = `${venceAmanha.id}:1:${hojeIso}`;
+      if (!avisosJaEnviadosHoje.includes(chaveUnica)) {
+        const desc = venceAmanha.conta_descricao || 'Conta';
+        const val = formatarValorTexto(venceAmanha.valor);
+        return {
+          parcela: venceAmanha,
+          diasAntes: 1,
+          titulo: 'Vencimento de Conta',
+          mensagem: `Vence amanhã: ${desc} — R$ ${val}`,
+          chaveUnica,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 async function executarReagendamentoInterno(
   parcelasCarregadas?: Parcela[],
   opcoes?: OpcoesReagendamento
@@ -606,6 +794,196 @@ export async function reagendarNotificacoes(
   });
 
   return reagendamentoEmAndamento;
+}
+
+/**
+ * Ativa o lembrete (sininho 🔔) de uma conta específica garantindo:
+ * 1) Que os lembretes globais não estejam silenciosamente desligados;
+ * 2) Reagendamento imediato com solicitação de permissão POST_NOTIFICATIONS se necessário;
+ * 3) Catch-up imediato se a conta vence hoje ou amanhã e o horário configurado do dia já passou;
+ * 4) Retorno claro informando próxima data/hora ou alerta se "Horário exato" estiver desligado.
+ */
+export async function ativarLembreteConta(
+  contaId: number,
+  descricao?: string,
+  opcoes?: { emitirToast?: boolean }
+): Promise<ResultadoAtivacaoLembrete> {
+  const nome = (descricao || 'esta conta').trim();
+  definirLembrete(contaId, true);
+
+  let config = obterConfiguracaoLembretes();
+  if (!config.habilitado) {
+    config = { ...config, habilitado: true };
+    salvarConfiguracaoLembretes(config);
+  }
+
+  const disponivel = isLocalNotificationsDisponivel();
+  if (!disponivel) {
+    const mensagemUsuario = `🔔 Lembrete ativado para "${nome}" (no Android, notificará às ${config.horario}).`;
+    if (opcoes?.emitirToast && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('em-dia-toast-lembrete', {
+          detail: { mensagem: mensagemUsuario, alerta: false },
+        })
+      );
+    }
+    return {
+      ativado: true,
+      permissaoNegada: false,
+      alarmeExatoConcedido: false,
+      totalAgendadas: 0,
+      agendadasConta: 0,
+      proximaDataFormatada: null,
+      avisoImediatoEnviado: false,
+      mensagemUsuario,
+    };
+  }
+
+  const totalAgendadas = await reagendarNotificacoes(undefined, {
+    forcarSolicitacaoPermissao: true,
+  });
+
+  const statusPermissao = await verificarStatusPermissao();
+  const exactStatus = await verificarPermissaoAlarmeExato();
+  const alarmeExatoConcedido = exactStatus === 'granted';
+
+  if (statusPermissao !== 'granted') {
+    const mensagemUsuario =
+      '⚠️ Sininho salvo, mas as notificações estão bloqueadas no Android. Libere em Ajustes.';
+    if (opcoes?.emitirToast && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('em-dia-toast-lembrete', {
+          detail: { mensagem: mensagemUsuario, alerta: true },
+        })
+      );
+    }
+    return {
+      ativado: true,
+      permissaoNegada: true,
+      alarmeExatoConcedido,
+      totalAgendadas: 0,
+      agendadasConta: 0,
+      proximaDataFormatada: null,
+      avisoImediatoEnviado: false,
+      mensagemUsuario,
+    };
+  }
+
+  let agendadasConta = 0;
+  let proximaDataFormatada: string | null = null;
+  let avisoImediatoEnviado = false;
+  let catchUp: CatchUpCandidato | null = null;
+
+  try {
+    const agora = new Date();
+    const hojeIso = formatarDataLocalIso(agora);
+    const todasParcelas = await listarParcelas({
+      status: 'todos',
+      mesAno: 'todos',
+      ordenacao: 'vencimento_asc',
+    });
+    const parcelasConta = todasParcelas.filter(
+      (p) => p.conta_id === contaId && p.status !== 'pago'
+    );
+
+    const previstasConta = montarNotificacoesAgendadas({
+      parcelas: parcelasConta,
+      config,
+      contasComSininho: [contaId],
+      agora,
+      usarAlarmeExato: alarmeExatoConcedido,
+      limite: 60,
+    });
+    agendadasConta = previstasConta.length;
+    if (previstasConta.length > 0 && previstasConta[0].schedule?.at) {
+      proximaDataFormatada = formatarDataHoraCurta(
+        new Date(previstasConta[0].schedule.at as any)
+      );
+    }
+
+    const avisosHoje = lerAvisosContasHoje(hojeIso);
+    catchUp = identificarParcelaCatchUpHoje({
+      parcelasConta,
+      config,
+      agora,
+      avisosJaEnviadosHoje: avisosHoje,
+    });
+
+    if (catchUp) {
+      await garantirCanalNotificacao();
+      const idCatchUp = catchUp.parcela.id * 10 + catchUp.diasAntes;
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: idCatchUp,
+            title: catchUp.titulo,
+            body: catchUp.mensagem,
+            largeBody: catchUp.mensagem,
+            channelId: 'vencimentos',
+            ...(alarmeExatoConcedido
+              ? {
+                  schedule: { at: new Date(Date.now() + 2000), allowWhileIdle: true },
+                  isExactNotification: true,
+                  isExactMandatory: false,
+                }
+              : {
+                  isExactNotification: false,
+                  isExactMandatory: false,
+                }),
+            foreground: true,
+            autoCancel: true,
+            extra: {
+              mesAno: catchUp.parcela.data_vencimento.slice(0, 7),
+              parcelaId: catchUp.parcela.id,
+            },
+          },
+        ],
+      });
+      registrarAvisoContaHoje(catchUp.chaveUnica, hojeIso);
+      avisoImediatoEnviado = true;
+    }
+  } catch (err) {
+    console.warn('Erro ao finalizar diagnóstico/catch-up ao ativar sininho:', err);
+  }
+
+  let mensagemUsuario = '';
+  if (avisoImediatoEnviado && catchUp) {
+    const resumoQuando = catchUp.diasAntes === 0 ? 'vence hoje' : 'vence amanhã';
+    mensagemUsuario = proximaDataFormatada
+      ? `🔔 Lembrete enviado agora (${resumoQuando})! Próximo alerta: ${proximaDataFormatada}.`
+      : `🔔 Lembrete enviado agora (${resumoQuando}) para "${nome}"!`;
+    if (!alarmeExatoConcedido) {
+      mensagemUsuario += ' Ative "Horário exato" em Ajustes para alertas pontuais.';
+    }
+  } else if (proximaDataFormatada) {
+    mensagemUsuario = alarmeExatoConcedido
+      ? `🔔 Lembrete agendado para ${proximaDataFormatada}.`
+      : `🔔 Agendado para ${proximaDataFormatada}, mas ative "Horário exato" em Ajustes para não atrasar.`;
+  } else {
+    mensagemUsuario = `🔔 Lembrete ativo para "${nome}" (sem vencimentos pendentes nos próximos 45 dias).`;
+  }
+
+  if (opcoes?.emitirToast && typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('em-dia-toast-lembrete', {
+        detail: {
+          mensagem: mensagemUsuario,
+          alerta: !alarmeExatoConcedido,
+        },
+      })
+    );
+  }
+
+  return {
+    ativado: true,
+    permissaoNegada: false,
+    alarmeExatoConcedido,
+    totalAgendadas,
+    agendadasConta,
+    proximaDataFormatada,
+    avisoImediatoEnviado,
+    mensagemUsuario,
+  };
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   montarNotificacoesAgendadas,
   filtrarIdsParaCancelarNoReagendamento,
   obterParcelasLembreteHoje,
+  identificarParcelaCatchUpHoje,
   NOTIFICACAO_TESTE_ID,
   NOTIFICACAO_ATRASADAS_ID,
   ConfiguracaoLembretes,
@@ -151,5 +152,62 @@ describe('Notificações e Lembretes Android', () => {
 
     const hoje = obterParcelasLembreteHoje(parcelas, '2026-11-13');
     expect(hoje.map((p) => p.id)).toEqual([1, 2]);
+  });
+
+  it('identifica catch-up para conta que vence hoje ou amanhã após o horário configurado', () => {
+    const depoisDas9 = new Date(2026, 10, 13, 13, 30, 0); // 13/11 13:30
+    const antesDas9 = new Date(2026, 10, 13, 8, 15, 0); // 13/11 08:15
+
+    const parcelaHoje = criarParcelaFake({
+      id: 7,
+      conta_id: 20,
+      data_vencimento: '2026-11-13',
+      conta_descricao: 'Aluguel',
+    });
+    const parcelaAmanha = criarParcelaFake({
+      id: 8,
+      conta_id: 21,
+      data_vencimento: '2026-11-14',
+      conta_descricao: 'Cartão',
+    });
+
+    // Antes do horário (08:15 < 09:00), o alarme normal ainda vai tocar -> sem catch-up
+    expect(
+      identificarParcelaCatchUpHoje({
+        parcelasConta: [parcelaHoje],
+        config: configBase,
+        agora: antesDas9,
+      })
+    ).toBeNull();
+
+    // Após 09:00 para conta que vence hoje -> dispara catch-up "Vence hoje"
+    const resHoje = identificarParcelaCatchUpHoje({
+      parcelasConta: [parcelaHoje],
+      config: configBase,
+      agora: depoisDas9,
+    });
+    expect(resHoje).not.toBeNull();
+    expect(resHoje?.diasAntes).toBe(0);
+    expect(resHoje?.mensagem).toContain('Vence hoje: Aluguel');
+
+    // Se já enviou hoje, não repete
+    expect(
+      identificarParcelaCatchUpHoje({
+        parcelasConta: [parcelaHoje],
+        config: configBase,
+        agora: depoisDas9,
+        avisosJaEnviadosHoje: [resHoje!.chaveUnica],
+      })
+    ).toBeNull();
+
+    // Após 09:00 para conta que vence amanhã -> dispara catch-up "Vence amanhã"
+    const resAmanha = identificarParcelaCatchUpHoje({
+      parcelasConta: [parcelaAmanha],
+      config: configBase,
+      agora: depoisDas9,
+    });
+    expect(resAmanha).not.toBeNull();
+    expect(resAmanha?.diasAntes).toBe(1);
+    expect(resAmanha?.mensagem).toContain('Vence amanhã: Cartão');
   });
 });

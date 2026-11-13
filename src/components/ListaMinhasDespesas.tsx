@@ -15,7 +15,9 @@ import { formatarMoeda, formatarData, formatarMesAno } from '../utils/formatters
 import { BarraProgressoVencimento } from './BarraProgressoVencimento';
 import {
   obterContasComLembrete,
-  alternarLembrete,
+  temLembrete,
+  definirLembrete,
+  ativarLembreteConta,
   reagendarNotificacoes,
 } from '../utils/lembretes';
 
@@ -400,30 +402,67 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
   const [cardAbertoId, setCardAbertoId] = useState<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [contasComLembrete, setContasComLembrete] = useState<Set<number>>(() => new Set(obterContasComLembrete()));
-  const [toastLembrete, setToastLembrete] = useState<string | null>(null);
+  const [toastLembrete, setToastLembrete] = useState<{ mensagem: string; alerta?: boolean } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const exibirToastLembrete = (mensagem: string, alerta = false) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastLembrete({ mensagem, alerta });
+    toastTimerRef.current = setTimeout(
+      () => {
+        setToastLembrete(null);
+        toastTimerRef.current = null;
+      },
+      alerta ? 5500 : 3800
+    );
+  };
 
   useEffect(() => {
     const sincronizar = () => {
       setContasComLembrete(new Set(obterContasComLembrete()));
     };
+    const onToast = (e: Event) => {
+      const detail = (e as CustomEvent<{ mensagem?: string; alerta?: boolean }>).detail;
+      if (detail?.mensagem) {
+        exibirToastLembrete(detail.mensagem, Boolean(detail.alerta));
+      }
+    };
     window.addEventListener('em-dia-lembretes-alterados', sincronizar);
     window.addEventListener('storage', sincronizar);
+    window.addEventListener('em-dia-toast-lembrete', onToast);
     return () => {
       window.removeEventListener('em-dia-lembretes-alterados', sincronizar);
       window.removeEventListener('storage', sincronizar);
+      window.removeEventListener('em-dia-toast-lembrete', onToast);
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
     };
   }, []);
 
-  const handleToggleLembrete = (contaId: number, descricao: string) => {
-    const ativo = alternarLembrete(contaId);
-    setContasComLembrete(new Set(obterContasComLembrete()));
-    reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: ativo }).catch(() => {});
-    setToastLembrete(
-      ativo
-        ? `🔔 Lembrete de vencimento ativado para "${descricao}"`
-        : `🔕 Lembrete desativado para "${descricao}".`
-    );
-    setTimeout(() => setToastLembrete(null), 3000);
+  const handleToggleLembrete = async (contaId: number, descricao: string) => {
+    const estavaAtivo = temLembrete(contaId);
+    if (!estavaAtivo) {
+      setContasComLembrete((prev) => new Set([...Array.from(prev), contaId]));
+      try {
+        const res = await ativarLembreteConta(contaId, descricao);
+        setContasComLembrete(new Set(obterContasComLembrete()));
+        exibirToastLembrete(
+          res.mensagemUsuario,
+          res.permissaoNegada || !res.alarmeExatoConcedido
+        );
+      } catch {
+        setContasComLembrete(new Set(obterContasComLembrete()));
+        exibirToastLembrete(`🔔 Lembrete ativado para "${descricao}"`, false);
+      }
+    } else {
+      definirLembrete(contaId, false);
+      setContasComLembrete(new Set(obterContasComLembrete()));
+      reagendarNotificacoes().catch(() => {});
+      exibirToastLembrete(`🔕 Lembrete desativado para "${descricao}".`, false);
+    }
   };
 
   useEffect(() => {
@@ -661,9 +700,15 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
 
       {/* Toast flutuante de confirmação do lembrete */}
       {toastLembrete && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold border border-white/10 dark:border-slate-800 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-none">
-          <Bell className="w-4 h-4 text-amber-400 dark:text-amber-600 fill-amber-400 dark:fill-amber-600" />
-          <span>{toastLembrete}</span>
+        <div
+          className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 max-w-[92vw] px-4 py-2.5 rounded-2xl shadow-xl text-xs font-bold border flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-none ${
+            toastLembrete.alerta
+              ? 'bg-amber-950/95 text-amber-100 border-amber-500/60'
+              : 'bg-slate-900/95 dark:bg-white/95 text-white dark:text-slate-900 border-white/10 dark:border-slate-800'
+          }`}
+        >
+          <Bell className="w-4 h-4 flex-shrink-0 text-amber-400 dark:text-amber-600 fill-amber-400 dark:fill-amber-600" />
+          <span className="leading-snug">{toastLembrete.mensagem}</span>
         </div>
       )}
 
