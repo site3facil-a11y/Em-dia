@@ -4,7 +4,7 @@ import { Categoria, TipoConta } from '../types';
 import { NovaContaInput } from '../db/repository';
 import { formatarMoeda, formatarData, getHojeString } from '../utils/formatters';
 import { parseMoedaParaCentavos, dividirEmParcelas } from '../utils/finance';
-import { definirLembrete } from '../utils/lembretes';
+import { definirLembrete, reagendarNotificacoes } from '../utils/lembretes';
 import { ModalBase, ModalBotoesRodape } from './ModalBase';
 
 interface ModalNovaContaProps {
@@ -162,6 +162,7 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
 
       if (typeof novoId === 'number' && novoId > 0 && lembreteAtivo) {
         definirLembrete(novoId, true);
+        await reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: true });
       }
 
       resetForm();
@@ -426,12 +427,12 @@ export const ModalNovaConta: React.FC<ModalNovaContaProps> = ({
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                  Lembrete no aplicativo (Sininho 🔔)
+                  Lembrete de vencimento (Sininho 🔔)
                 </span>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
                   {lembreteAtivo
-                    ? '🔔 Lembrete interno ativado ao abrir o app.'
-                    : 'Exibido dentro do app na abertura se vencer hoje ou atrasar (não é notificação do sistema).'}
+                    ? '🔔 Notificação no Android e lembrete ao abrir o app ativados.'
+                    : 'Ative para receber notificação no Android e aviso ao abrir o app.'}
                 </span>
               </div>
             </div>

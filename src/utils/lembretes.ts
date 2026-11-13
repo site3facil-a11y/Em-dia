@@ -5,10 +5,18 @@ import {
   PermissionStatus,
 } from '@capacitor/local-notifications';
 import { Parcela } from '../types';
-import { formatarMoeda } from './formatters';
+import { formatarMoeda, getHojeString, getMesAnoAtual } from './formatters';
 import { listarParcelas } from '../db/repository';
 
 export type StatusPermissaoLembretes = PermissionState | 'unsupported';
+export type StatusAlarmeExato = PermissionState | 'unsupported';
+
+export const NOTIFICACAO_TESTE_ID = 999999;
+export const NOTIFICACAO_ATRASADAS_ID = 888888;
+const IDS_RESERVADOS_SISTEMA = new Set<number>([
+  NOTIFICACAO_TESTE_ID,
+  NOTIFICACAO_ATRASADAS_ID,
+]);
 
 const STORAGE_KEY_LEMBRETES = 'em_dia_lembretes_contas';
 const STORAGE_KEY_CONFIG = 'em_dia_config_lembretes_vencimento';
@@ -24,6 +32,18 @@ export interface ConfiguracaoLembretes {
   };
 }
 
+export interface OpcoesReagendamento {
+  solicitarPermissaoSePrompt?: boolean;
+  forcarSolicitacaoPermissao?: boolean;
+}
+
+export interface ResultadoNotificacaoTeste {
+  sucesso: boolean;
+  imediata?: boolean;
+  alarmeExatoConcedido?: boolean;
+  mensagem?: string;
+}
+
 const CONFIG_PADRAO: ConfiguracaoLembretes = {
   habilitado: true,
   horario: '09:00',
@@ -34,9 +54,26 @@ const CONFIG_PADRAO: ConfiguracaoLembretes = {
   },
 };
 
+let reagendamentoEmAndamento: Promise<number> | null = null;
+let reagendamentoPendente: {
+  parcelas?: Parcela[];
+  opcoes?: OpcoesReagendamento;
+} | null = null;
+let permissaoAutoSolicitadaNaSessao = false;
+
+/**
+ * Formata um Date em string YYYY-MM-DD no fuso horário LOCAL do dispositivo
+ * (evita deslocamento de dia causado por toISOString() em UTC após as 21h no Brasil).
+ */
+export function formatarDataLocalIso(data: Date): string {
+  const yyyy = data.getFullYear();
+  const mm = String(data.getMonth() + 1).padStart(2, '0');
+  const dd = String(data.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 /**
  * Verifica se a plataforma nativa e o plugin LocalNotifications estão disponíveis
- * Item 1: Antes de qualquer chamada, verifica isNativePlatform() e isPluginAvailable('LocalNotifications')
  */
 export function isLocalNotificationsDisponivel(): boolean {
   try {
@@ -55,7 +92,7 @@ export function isLocalNotificationsDisponivel(): boolean {
 export function obterConfiguracaoLembretes(): ConfiguracaoLembretes {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
-    if (!raw) return { ...CONFIG_PADRAO };
+    if (!raw) return { ...CONFIG_PADRAO, antecedencia: { ...CONFIG_PADRAO.antecedencia } };
     const parsed = JSON.parse(raw);
     return {
       habilitado: typeof parsed.habilitado === 'boolean' ? parsed.habilitado : CONFIG_PADRAO.habilitado,
@@ -67,7 +104,7 @@ export function obterConfiguracaoLembretes(): ConfiguracaoLembretes {
       },
     };
   } catch {
-    return { ...CONFIG_PADRAO };
+    return { ...CONFIG_PADRAO, antecedencia: { ...CONFIG_PADRAO.antecedencia } };
   }
 }
 
@@ -86,12 +123,23 @@ export function salvarConfiguracaoLembretes(config: ConfiguracaoLembretes): void
 }
 
 /**
- * Verifica o status atual da permissão de notificações do sistema operacional
+ * Verifica o status atual da permissão de notificações do sistema operacional,
+ * checando também areEnabled() para detectar bloqueio direto nas configurações do Android.
  */
 export async function verificarStatusPermissao(): Promise<StatusPermissaoLembretes> {
   if (!isLocalNotificationsDisponivel()) return 'unsupported';
   try {
     const status: PermissionStatus = await LocalNotifications.checkPermissions();
+    if (status.display === 'granted' && typeof LocalNotifications.areEnabled === 'function') {
+      try {
+        const enabled = await LocalNotifications.areEnabled();
+        if (enabled && enabled.value === false) {
+          return 'denied';
+        }
+      } catch {
+        // Ignora caso areEnabled falhe em versões futuras
+      }
+    }
     return status.display;
   } catch (err) {
     console.warn('Erro ao verificar status de permissão:', err);
@@ -111,9 +159,20 @@ export async function solicitarPermissaoLembretes(): Promise<{
   }
   try {
     const status: PermissionStatus = await LocalNotifications.requestPermissions();
+    let finalDisplay: StatusPermissaoLembretes = status.display;
+    if (finalDisplay === 'granted' && typeof LocalNotifications.areEnabled === 'function') {
+      try {
+        const enabled = await LocalNotifications.areEnabled();
+        if (enabled && enabled.value === false) {
+          finalDisplay = 'denied';
+        }
+      } catch {
+        // noop
+      }
+    }
     return {
-      concedida: status.display === 'granted',
-      status: status.display,
+      concedida: finalDisplay === 'granted',
+      status: finalDisplay,
     };
   } catch (err) {
     console.warn('Erro ao solicitar permissão de notificações:', err);
@@ -122,17 +181,60 @@ export async function solicitarPermissaoLembretes(): Promise<{
 }
 
 /**
- * Cria ou atualiza o canal de notificações Android "Vencimentos" (Item 5)
+ * Verifica se o Android 12+ permite alarmes exatos (leitura silenciosa, sem abrir Configurações).
+ */
+export async function verificarPermissaoAlarmeExato(): Promise<StatusAlarmeExato> {
+  if (!isLocalNotificationsDisponivel()) return 'unsupported';
+  try {
+    if (Capacitor.getPlatform() !== 'android') {
+      return 'granted';
+    }
+    if (typeof LocalNotifications.checkExactNotificationSetting !== 'function') {
+      return 'granted';
+    }
+    const res = await LocalNotifications.checkExactNotificationSetting();
+    return res?.exact_alarm || 'denied';
+  } catch (err) {
+    console.warn('Erro ao verificar permissão de alarme exato:', err);
+    return 'denied';
+  }
+}
+
+/**
+ * Abre a tela do sistema Android "Alarmes e lembretes" para o usuário autorizar horário exato.
+ */
+export async function solicitarPermissaoAlarmeExato(): Promise<StatusAlarmeExato> {
+  if (!isLocalNotificationsDisponivel()) return 'unsupported';
+  try {
+    if (Capacitor.getPlatform() !== 'android') {
+      return 'granted';
+    }
+    if (typeof LocalNotifications.changeExactNotificationSetting !== 'function') {
+      return 'granted';
+    }
+    const res = await LocalNotifications.changeExactNotificationSetting();
+    return res?.exact_alarm || 'denied';
+  } catch (err) {
+    console.warn('Erro ao solicitar permissão de alarme exato:', err);
+    return 'denied';
+  }
+}
+
+/**
+ * Cria ou atualiza o canal de notificações Android "Vencimentos"
  */
 export async function garantirCanalNotificacao(): Promise<void> {
   if (!isLocalNotificationsDisponivel()) return;
   try {
+    if (Capacitor.getPlatform() !== 'android') return;
     await LocalNotifications.createChannel({
       id: 'vencimentos',
       name: 'Vencimentos',
       description: 'Lembretes de vencimento de contas',
-      importance: 4, // High importance (alerta com som e banner)
+      importance: 4, // IMPORTANCE_HIGH: alerta com som e banner heads-up
+      visibility: 1, // VISIBILITY_PUBLIC: visível na tela de bloqueio
       vibration: true,
+      lights: true,
     });
   } catch (err) {
     console.warn('Erro ao criar canal de notificações vencimentos:', err);
@@ -147,9 +249,30 @@ export function obterContasComLembrete(): number[] {
     const raw = localStorage.getItem(STORAGE_KEY_LEMBRETES);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((id) => typeof id === 'number' && Number.isFinite(id))
+      : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Remove da lista de sininhos IDs de contas que não existem mais no banco
+ */
+function limparSininhoContasInexistentes(idsExistentes: Set<number>): void {
+  const atuais = obterContasComLembrete();
+  if (atuais.length === 0) return;
+  const filtrados = atuais.filter((id) => idsExistentes.has(id));
+  if (filtrados.length !== atuais.length) {
+    try {
+      localStorage.setItem(STORAGE_KEY_LEMBRETES, JSON.stringify(filtrados));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('em-dia-lembretes-alterados', { detail: { contaId: null, ativo: false } }));
+      }
+    } catch (err) {
+      console.warn('Erro ao limpar sininhos órfãos:', err);
+    }
   }
 }
 
@@ -191,14 +314,13 @@ export function alternarLembrete(contaId: number): boolean {
 }
 
 /**
- * Retorna parcelas pendentes com lembrete ativo que vencem hoje ou estão atrasadas
- * para exibição como lembrete interno dentro do aplicativo na abertura
+ * Retorna parcelas não pagas com lembrete ativo que vencem hoje ou estão atrasadas
+ * para exibição como lembrete interno dentro do aplicativo na abertura.
  */
-export function obterParcelasLembreteHoje(parcelas: Parcela[]): Parcela[] {
-  const hoje = new Date().toISOString().slice(0, 10);
+export function obterParcelasLembreteHoje(parcelas: Parcela[], hojeOverride?: string): Parcela[] {
+  const hoje = hojeOverride || getHojeString();
   const contasComLembrete = new Set(obterContasComLembrete());
   if (contasComLembrete.size === 0) {
-    // Se nenhuma conta tiver sininho ligado, mostra todas que vencem hoje ou atrasadas
     return parcelas.filter((p) => p.status !== 'pago' && p.data_vencimento <= hoje);
   }
 
@@ -211,7 +333,7 @@ export function obterParcelasLembreteHoje(parcelas: Parcela[]): Parcela[] {
 }
 
 /**
- * Calcula a data de agendamento retroagindo N dias da data de vencimento
+ * Calcula a data de agendamento retroagindo N dias da data de vencimento no horário local
  */
 function calcularDataAgendamento(dataVencimentoIso: string, diasAntes: number, horarioStr: string): Date {
   const [ano, mes, dia] = dataVencimentoIso.split('-').map(Number);
@@ -231,149 +353,263 @@ function formatarValorTexto(valor: number): string {
   return texto.replace(/^R\$\s*/, '').trim();
 }
 
+export interface OpcoesMontagemNotificacoes {
+  parcelas: Parcela[];
+  config: ConfiguracaoLembretes;
+  contasComSininho: number[];
+  agora?: Date;
+  usarAlarmeExato?: boolean;
+  limite?: number;
+}
+
 /**
- * Agendamento aproximado de notificações (Item 3, 4, 5)
- * Cancela as notificações antigas do app (getPending + cancel) e agenda novas
- * para as parcelas pendentes dos próximos 45 dias.
- * Limite a 60 notificações pendentes, priorizando as mais próximas.
+ * Função pura que gera a lista de notificações a serem agendadas para os próximos 45 dias.
+ * Exportada para cobertura direta em testes unitários.
  */
-export async function reagendarNotificacoes(parcelasCarregadas?: Parcela[]): Promise<void> {
-  if (!isLocalNotificationsDisponivel()) return;
+export function montarNotificacoesAgendadas({
+  parcelas,
+  config,
+  contasComSininho,
+  agora = new Date(),
+  usarAlarmeExato = false,
+  limite = 60,
+}: OpcoesMontagemNotificacoes): LocalNotificationSchema[] {
+  if (!config.habilitado) return [];
+
+  const hojeIso = formatarDataLocalIso(agora);
+  const limite45 = new Date(agora.getTime());
+  limite45.setDate(limite45.getDate() + 45);
+  const limite45Iso = formatarDataLocalIso(limite45);
+
+  const parcelasNoIntervalo = parcelas.filter(
+    (p) => p.status !== 'pago' && p.data_vencimento >= hojeIso && p.data_vencimento <= limite45Iso
+  );
+
+  let parcelasAlvo = parcelasNoIntervalo;
+  if (contasComSininho.length > 0) {
+    const sininhoSet = new Set(contasComSininho);
+    parcelasAlvo = parcelasNoIntervalo.filter((p) => sininhoSet.has(p.conta_id));
+  }
+
+  const agoraTimestamp = agora.getTime();
+  const notificacoesCandidatas: LocalNotificationSchema[] = [];
+
+  for (const p of parcelasAlvo) {
+    const descricao = p.conta_descricao || 'Conta';
+    const valorFormatado = formatarValorTexto(p.valor);
+    const mesAnoParcela = p.data_vencimento.slice(0, 7);
+
+    const adicionarCandidata = (diasAntes: 0 | 1 | 3, prefixoTexto: string) => {
+      const dataDisparo = calcularDataAgendamento(p.data_vencimento, diasAntes, config.horario);
+      if (dataDisparo.getTime() > agoraTimestamp) {
+        const mensagem = `${prefixoTexto}: ${descricao} — R$ ${valorFormatado}`;
+        notificacoesCandidatas.push({
+          id: p.id * 10 + diasAntes,
+          title: 'Vencimento de Conta',
+          body: mensagem,
+          largeBody: mensagem,
+          channelId: 'vencimentos',
+          schedule: { at: dataDisparo, allowWhileIdle: true },
+          isExactNotification: usarAlarmeExato,
+          isExactMandatory: false,
+          foreground: true,
+          autoCancel: true,
+          extra: { mesAno: mesAnoParcela, parcelaId: p.id },
+        });
+      }
+    };
+
+    if (config.antecedencia.noDia) {
+      adicionarCandidata(0, 'Vence hoje');
+    }
+    if (config.antecedencia.umDiaAntes) {
+      adicionarCandidata(1, 'Vence amanhã');
+    }
+    if (config.antecedencia.tresDiasAntes) {
+      adicionarCandidata(3, 'Vence em 3 dias');
+    }
+  }
+
+  notificacoesCandidatas.sort((a, b) => {
+    const tempoA = (a.schedule?.at as Date)?.getTime() || 0;
+    const tempoB = (b.schedule?.at as Date)?.getTime() || 0;
+    return tempoA - tempoB;
+  });
+
+  return notificacoesCandidatas.slice(0, limite);
+}
+
+/**
+ * Filtra os IDs a cancelar no reagendamento, preservando notificações especiais
+ * (teste 999999 e resumo de atrasadas 888888).
+ */
+export function filtrarIdsParaCancelarNoReagendamento(ids: number[]): number[] {
+  return ids.filter((id) => !IDS_RESERVADOS_SISTEMA.has(id));
+}
+
+/**
+ * Consulta quantas notificações de vencimento estão realmente agendadas no sistema
+ */
+export async function obterQtdNotificacoesAgendadas(): Promise<number> {
+  if (!isLocalNotificationsDisponivel()) return 0;
+  try {
+    if (typeof LocalNotifications.getAll === 'function') {
+      const res = await LocalNotifications.getAll({ state: 'SCHEDULED' });
+      return (res?.notifications || []).filter(
+        (n) => n.id !== NOTIFICACAO_TESTE_ID
+      ).length;
+    }
+    const pending = await LocalNotifications.getPending();
+    return (pending?.notifications || []).filter(
+      (n) => n.id !== NOTIFICACAO_TESTE_ID
+    ).length;
+  } catch {
+    return 0;
+  }
+}
+
+async function executarReagendamentoInterno(
+  parcelasCarregadas?: Parcela[],
+  opcoes?: OpcoesReagendamento
+): Promise<number> {
+  if (!isLocalNotificationsDisponivel()) return 0;
 
   const config = obterConfiguracaoLembretes();
 
   try {
-    // 1. Cancela notificações pendentes antigas
+    // 1. Cancela notificações antigas de parcelas (preservando teste 999999 e resumo 888888)
     const pendingResult = await LocalNotifications.getPending();
-    if (pendingResult.notifications && pendingResult.notifications.length > 0) {
+    const idsParaCancelar = filtrarIdsParaCancelarNoReagendamento(
+      (pendingResult.notifications || []).map((n) => n.id)
+    );
+    if (idsParaCancelar.length > 0) {
       await LocalNotifications.cancel({
-        notifications: pendingResult.notifications.map((n) => ({ id: n.id })),
+        notifications: idsParaCancelar.map((id) => ({ id })),
       });
     }
 
-    // Se o usuário desativou os lembretes, encerra após cancelar
+    // Se o usuário desativou os lembretes globalmente, encerra após cancelar
     if (!config.habilitado) {
-      return;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('em-dia-notificacoes-reagendadas', { detail: { totalAgendadas: 0 } }));
+      }
+      return 0;
     }
 
-    // Verifica se a permissão foi concedida
-    const permStatus = await LocalNotifications.checkPermissions();
-    if (permStatus.display !== 'granted') {
-      return;
+    // 2. Verifica (e, se aplicável, solicita uma única vez) a permissão POST_NOTIFICATIONS
+    let statusPermissao = await verificarStatusPermissao();
+    if (
+      (statusPermissao === 'prompt' || statusPermissao === 'prompt-with-rationale') &&
+      (opcoes?.forcarSolicitacaoPermissao || (opcoes?.solicitarPermissaoSePrompt && !permissaoAutoSolicitadaNaSessao))
+    ) {
+      permissaoAutoSolicitadaNaSessao = true;
+      const req = await solicitarPermissaoLembretes();
+      statusPermissao = req.status;
     }
 
-    // 2. Garante o canal de notificações Android
+    if (statusPermissao !== 'granted') {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('em-dia-notificacoes-reagendadas', { detail: { totalAgendadas: 0 } }));
+      }
+      return 0;
+    }
+
+    // 3. Garante o canal de notificações Android com alta importância e vibração
     await garantirCanalNotificacao();
 
-    // 3. Consulta as parcelas pendentes
-    const todasParcelas =
-      parcelasCarregadas && parcelasCarregadas.length > 0
-        ? parcelasCarregadas
-        : await listarParcelas({ status: 'pendente', mesAno: 'todos', ordenacao: 'vencimento_asc' });
-
-    // Calcula limite dos próximos 45 dias
-    const hoje = new Date();
-    const hojeIso = hoje.toISOString().slice(0, 10);
-    const limite45 = new Date();
-    limite45.setDate(limite45.getDate() + 45);
-    const limite45Iso = limite45.toISOString().slice(0, 10);
-
-    // Filtra parcelas pendentes entre hoje e 45 dias à frente
-    const parcelasNoIntervalo = todasParcelas.filter(
-      (p) => p.status !== 'pago' && p.data_vencimento >= hojeIso && p.data_vencimento <= limite45Iso
-    );
-
-    // Respeita o sininho (🔔) individual de cada conta:
-    // só agenda as que têm o lembrete ligado; se nenhuma tiver sininho, o padrão é todas as pendentes
-    const contasComSininho = obterContasComLembrete();
-    let parcelasAlvo = parcelasNoIntervalo;
-    if (contasComSininho.length > 0) {
-      const sininhoSet = new Set(contasComSininho);
-      parcelasAlvo = parcelasNoIntervalo.filter((p) => sininhoSet.has(p.conta_id));
+    // 4. Consulta todas as parcelas (status 'todos' para incluir também 'atrasado' e mapear contas reais)
+    let todasParcelas = parcelasCarregadas;
+    let carregouBancoCompleto = false;
+    if (!todasParcelas) {
+      todasParcelas = await listarParcelas({
+        status: 'todos',
+        mesAno: 'todos',
+        ordenacao: 'vencimento_asc',
+      });
+      carregouBancoCompleto = true;
     }
 
-    const agoraTimestamp = Date.now();
-    const notificacoesCandidatas: LocalNotificationSchema[] = [];
-
-    for (const p of parcelasAlvo) {
-      const descricao = p.conta_descricao || 'Conta';
-      const valorFormatado = formatarValorTexto(p.valor);
-      const mesAnoParcela = p.data_vencimento.slice(0, 7);
-
-      // Antecedência: "no dia" (0 dias antes)
-      if (config.antecedencia.noDia) {
-        const dataDisparo = calcularDataAgendamento(p.data_vencimento, 0, config.horario);
-        if (dataDisparo.getTime() > agoraTimestamp) {
-          notificacoesCandidatas.push({
-            id: p.id * 10 + 0, // ID estável derivado do ID da parcela e antecedência
-            title: 'Vencimento de Conta',
-            body: `Vence hoje: ${descricao} — R$ ${valorFormatado}`,
-            largeBody: `Vence hoje: ${descricao} — R$ ${valorFormatado}`,
-            channelId: 'vencimentos',
-            schedule: { at: dataDisparo, allowWhileIdle: true },
-            isExactNotification: false, // Agendamento aproximado (sem SCHEDULE_EXACT_ALARM)
-            extra: { mesAno: mesAnoParcela, parcelaId: p.id },
-          });
-        }
-      }
-
-      // Antecedência: "1 dia antes" (1 dia antes)
-      if (config.antecedencia.umDiaAntes) {
-        const dataDisparo = calcularDataAgendamento(p.data_vencimento, 1, config.horario);
-        if (dataDisparo.getTime() > agoraTimestamp) {
-          notificacoesCandidatas.push({
-            id: p.id * 10 + 1,
-            title: 'Vencimento de Conta',
-            body: `Vence amanhã: ${descricao} — R$ ${valorFormatado}`,
-            largeBody: `Vence amanhã: ${descricao} — R$ ${valorFormatado}`,
-            channelId: 'vencimentos',
-            schedule: { at: dataDisparo, allowWhileIdle: true },
-            isExactNotification: false,
-            extra: { mesAno: mesAnoParcela, parcelaId: p.id },
-          });
-        }
-      }
-
-      // Antecedência: "3 dias antes" (3 dias antes)
-      if (config.antecedencia.tresDiasAntes) {
-        const dataDisparo = calcularDataAgendamento(p.data_vencimento, 3, config.horario);
-        if (dataDisparo.getTime() > agoraTimestamp) {
-          notificacoesCandidatas.push({
-            id: p.id * 10 + 3,
-            title: 'Vencimento de Conta',
-            body: `Vence em 3 dias: ${descricao} — R$ ${valorFormatado}`,
-            largeBody: `Vence em 3 dias: ${descricao} — R$ ${valorFormatado}`,
-            channelId: 'vencimentos',
-            schedule: { at: dataDisparo, allowWhileIdle: true },
-            isExactNotification: false,
-            extra: { mesAno: mesAnoParcela, parcelaId: p.id },
-          });
-        }
-      }
+    if (carregouBancoCompleto && todasParcelas.length > 0) {
+      const contasReais = new Set(todasParcelas.map((p) => p.conta_id));
+      limparSininhoContasInexistentes(contasReais);
     }
 
-    // Prioriza as notificações mais próximas no tempo
-    notificacoesCandidatas.sort((a, b) => {
-      const tempoA = (a.schedule?.at as Date)?.getTime() || 0;
-      const tempoB = (b.schedule?.at as Date)?.getTime() || 0;
-      return tempoA - tempoB;
+    // 5. Verifica se o Android permite alarmes exatos sem abrir telas de configuração
+    const exactStatus = await verificarPermissaoAlarmeExato();
+    const usarAlarmeExato = exactStatus === 'granted';
+
+    const finalNotificacoes = montarNotificacoesAgendadas({
+      parcelas: todasParcelas,
+      config,
+      contasComSininho: obterContasComLembrete(),
+      agora: new Date(),
+      usarAlarmeExato,
+      limite: 60,
     });
-
-    // Limita a no máximo 60 notificações pendentes
-    const finalNotificacoes = notificacoesCandidatas.slice(0, 60);
 
     if (finalNotificacoes.length > 0) {
       await LocalNotifications.schedule({
         notifications: finalNotificacoes,
       });
     }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('em-dia-notificacoes-reagendadas', {
+          detail: { totalAgendadas: finalNotificacoes.length },
+        })
+      );
+    }
+
+    return finalNotificacoes.length;
   } catch (err) {
     console.warn('Erro ao reagendar notificações locais:', err);
+    return 0;
   }
 }
 
 /**
- * Cancela imediatamente as notificações agendadas de uma parcela quitada (Item 6)
+ * Reagenda notificações de vencimento com serialização (mutex) para evitar
+ * condições de corrida entre chamadas simultâneas (ex: appStateChange + visibilitychange + CRUD).
+ */
+export async function reagendarNotificacoes(
+  parcelasCarregadas?: Parcela[],
+  opcoes?: OpcoesReagendamento
+): Promise<number> {
+  if (!isLocalNotificationsDisponivel()) return 0;
+
+  if (reagendamentoEmAndamento) {
+    reagendamentoPendente = {
+      parcelas: parcelasCarregadas ?? reagendamentoPendente?.parcelas,
+      opcoes: {
+        solicitarPermissaoSePrompt:
+          Boolean(reagendamentoPendente?.opcoes?.solicitarPermissaoSePrompt) ||
+          Boolean(opcoes?.solicitarPermissaoSePrompt),
+        forcarSolicitacaoPermissao:
+          Boolean(reagendamentoPendente?.opcoes?.forcarSolicitacaoPermissao) ||
+          Boolean(opcoes?.forcarSolicitacaoPermissao),
+      },
+    };
+    return reagendamentoEmAndamento;
+  }
+
+  reagendamentoEmAndamento = (async () => {
+    let ultimoTotal = await executarReagendamentoInterno(parcelasCarregadas, opcoes);
+    while (reagendamentoPendente) {
+      const prox = reagendamentoPendente;
+      reagendamentoPendente = null;
+      ultimoTotal = await executarReagendamentoInterno(prox.parcelas, prox.opcoes);
+    }
+    return ultimoTotal;
+  })().finally(() => {
+    reagendamentoEmAndamento = null;
+  });
+
+  return reagendamentoEmAndamento;
+}
+
+/**
+ * Cancela imediatamente as notificações agendadas de uma parcela quitada
  */
 export async function cancelarNotificacoesParcela(parcelaId: number): Promise<void> {
   if (!isLocalNotificationsDisponivel()) return;
@@ -388,17 +624,21 @@ export async function cancelarNotificacoesParcela(parcelaId: number): Promise<vo
 }
 
 /**
- * Notificação de teste com disparo em 5 segundos (Item 2)
+ * Notificação de teste:
+ * - Se alarme exato está concedido: agenda para 5 segundos usando alarme exato + heads-up.
+ * - Se alarme exato NÃO está concedido no Android 12+: dispara imediatamente (sem atraso do Doze/setAndAllowWhileIdle)
+ *   para o usuário confirmar na hora que as notificações funcionam, orientando ativar o horário exato.
  */
-export async function dispararNotificacaoTeste(): Promise<{ sucesso: boolean; mensagem?: string }> {
+export async function dispararNotificacaoTeste(): Promise<ResultadoNotificacaoTeste> {
   if (!isLocalNotificationsDisponivel()) {
     return { sucesso: false, mensagem: 'Notificações exigem o app mais recente' };
   }
   try {
-    const permStatus = await LocalNotifications.checkPermissions();
-    if (permStatus.display !== 'granted') {
-      const req = await LocalNotifications.requestPermissions();
-      if (req.display !== 'granted') {
+    let status = await verificarStatusPermissao();
+    if (status !== 'granted') {
+      const req = await solicitarPermissaoLembretes();
+      status = req.status;
+      if (!req.concedida || status !== 'granted') {
         return {
           sucesso: false,
           mensagem: 'Permissão de notificação negada no Android. Habilite nas configurações.',
@@ -407,24 +647,57 @@ export async function dispararNotificacaoTeste(): Promise<{ sucesso: boolean; me
     }
 
     await garantirCanalNotificacao();
-    const emCincoSegundos = new Date(Date.now() + 5000);
 
+    const exactStatus = await verificarPermissaoAlarmeExato();
+    const alarmeExatoConcedido = exactStatus === 'granted';
+    const mesAnoAtual = getMesAnoAtual();
+
+    const notificacaoBase: LocalNotificationSchema = {
+      id: NOTIFICACAO_TESTE_ID,
+      title: 'Em Dia — Notificação de Teste',
+      body: 'Suas notificações de vencimento estão configuradas e ativas!',
+      largeBody: 'Suas notificações de vencimento estão configuradas e ativas!',
+      channelId: 'vencimentos',
+      foreground: true,
+      autoCancel: true,
+      extra: { mesAno: mesAnoAtual },
+    };
+
+    if (alarmeExatoConcedido) {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            ...notificacaoBase,
+            schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true },
+            isExactNotification: true,
+            isExactMandatory: false,
+          },
+        ],
+      });
+      return {
+        sucesso: true,
+        imediata: false,
+        alarmeExatoConcedido: true,
+      };
+    }
+
+    // Sem alarme exato autorizado no Android 12+, evita setAndAllowWhileIdle (que o sistema atrasa por vários minutos)
+    // e dispara imediatamente para validar canal, som e exibição na barra de status.
     await LocalNotifications.schedule({
       notifications: [
         {
-          id: 999999,
-          title: 'Em Dia — Notificação de Teste',
-          body: 'Suas notificações de vencimento estão configuradas e ativas!',
-          largeBody: 'Suas notificações de vencimento estão configuradas e ativas!',
-          channelId: 'vencimentos',
-          schedule: { at: emCincoSegundos, allowWhileIdle: true },
+          ...notificacaoBase,
           isExactNotification: false,
-          extra: { mesAno: new Date().toISOString().slice(0, 7) },
+          isExactMandatory: false,
         },
       ],
     });
 
-    return { sucesso: true };
+    return {
+      sucesso: true,
+      imediata: true,
+      alarmeExatoConcedido: false,
+    };
   } catch (err: any) {
     console.warn('Erro ao disparar notificação de teste:', err);
     return { sucesso: false, mensagem: err?.message || 'Falha ao agendar teste.' };
@@ -432,8 +705,8 @@ export async function dispararNotificacaoTeste(): Promise<{ sucesso: boolean; me
 }
 
 /**
- * Para contas atrasadas, uma única notificação de resumo na abertura do app (Item 4):
- * "Você tem {n} conta(s) atrasada(s)", sem repetir a cada dia.
+ * Para contas atrasadas, uma única notificação de resumo por dia na abertura do app:
+ * "Você tem {n} conta(s) atrasada(s)".
  */
 export async function verificarNotificacaoResumoAtrasadas(parcelas: Parcela[]): Promise<void> {
   if (!isLocalNotificationsDisponivel()) return;
@@ -442,14 +715,13 @@ export async function verificarNotificacaoResumoAtrasadas(parcelas: Parcela[]): 
   if (!config.habilitado) return;
 
   try {
-    const perm = await LocalNotifications.checkPermissions();
-    if (perm.display !== 'granted') return;
+    const status = await verificarStatusPermissao();
+    if (status !== 'granted') return;
 
-    const hojeIso = new Date().toISOString().slice(0, 10);
+    const hojeIso = getHojeString();
     const ultimoAviso = localStorage.getItem(STORAGE_KEY_ULTIMO_AVISO_ATRASADAS);
 
     if (ultimoAviso === hojeIso) {
-      // Já enviado hoje; não repete a cada dia
       return;
     }
 
@@ -463,16 +735,29 @@ export async function verificarNotificacaoResumoAtrasadas(parcelas: Parcela[]): 
         ? 'Você tem 1 conta atrasada'
         : `Você tem ${n} contas atrasadas`;
 
+    const exactStatus = await verificarPermissaoAlarmeExato();
+    const usarAlarmeExato = exactStatus === 'granted';
+
     await LocalNotifications.schedule({
       notifications: [
         {
-          id: 888888,
+          id: NOTIFICACAO_ATRASADAS_ID,
           title: 'Contas Atrasadas',
           body: textoAtrasadas,
           largeBody: textoAtrasadas,
           channelId: 'vencimentos',
-          schedule: { at: new Date(Date.now() + 1000), allowWhileIdle: true },
-          isExactNotification: false,
+          ...(usarAlarmeExato
+            ? {
+                schedule: { at: new Date(Date.now() + 1000), allowWhileIdle: true },
+                isExactNotification: true,
+                isExactMandatory: false,
+              }
+            : {
+                isExactNotification: false,
+                isExactMandatory: false,
+              }),
+          foreground: true,
+          autoCancel: true,
           extra: { mesAno: hojeIso.slice(0, 7) },
         },
       ],
@@ -485,7 +770,7 @@ export async function verificarNotificacaoResumoAtrasadas(parcelas: Parcela[]): 
 }
 
 /**
- * Ouvinte para quando o usuário toca em uma notificação (Item 7)
+ * Ouvinte para quando o usuário toca em uma notificação:
  * Abre o app na tela Início, no mês da parcela
  */
 export function inicializarOuvinteNotificacoes(
@@ -498,7 +783,7 @@ export function inicializarOuvinteNotificacoes(
     LocalNotifications.addListener('localNotificationActionPerformed', (notificationAction) => {
       try {
         const extra = notificationAction?.notification?.extra;
-        const mesAno = extra?.mesAno || new Date().toISOString().slice(0, 7);
+        const mesAno = extra?.mesAno || getMesAnoAtual();
         onAbrirInicioNoMes(mesAno);
       } catch (err) {
         console.warn('Erro ao processar toque na notificação:', err);

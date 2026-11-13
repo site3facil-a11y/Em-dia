@@ -6,6 +6,7 @@ import { BarraProgressoVencimento } from './BarraProgressoVencimento';
 import {
   temLembrete,
   alternarLembrete,
+  reagendarNotificacoes,
 } from '../utils/lembretes';
 import { ModalBase } from './ModalBase';
 
@@ -24,18 +25,23 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
   onPagarParcela,
   onDesfazerPagamento,
 }) => {
-  if (!aberto || parcelas.length === 0 || parcelas[0]?.tipo_conta !== 'parcelada') return null;
-
   const primeira = parcelas[0];
-  const [lembreteAtivo, setLembreteAtivo] = useState(() => temLembrete(primeira.conta_id));
+  const [lembreteAtivo, setLembreteAtivo] = useState(() =>
+    primeira ? temLembrete(primeira.conta_id) : false
+  );
 
   useEffect(() => {
-    setLembreteAtivo(temLembrete(primeira.conta_id));
-  }, [primeira.conta_id]);
+    if (primeira) {
+      setLembreteAtivo(temLembrete(primeira.conta_id));
+    }
+  }, [primeira?.conta_id]);
+
+  if (!aberto || !primeira || primeira.tipo_conta !== 'parcelada') return null;
 
   const handleToggleLembrete = () => {
     const novo = alternarLembrete(primeira.conta_id);
     setLembreteAtivo(novo);
+    reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: novo }).catch(() => {});
   };
 
   const totalConta = parcelas.reduce((acc, p) => acc + p.valor, 0);
@@ -75,11 +81,9 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
         </div>
       }
       subtitulo={`${primeira.categoria_nome} • ${
-        primeira.tipo_conta === 'parcelada' && primeira.total_parcelas > 1
+        primeira.total_parcelas > 1
           ? `${primeira.total_parcelas} parcelas`
-          : primeira.tipo_conta === 'recorrente'
-          ? 'Pagamento recorrente'
-          : 'Pagamento único'
+          : 'Conta parcelada'
       }`}
       tamanhoMaximo="max-w-2xl"
       rodape={
@@ -136,7 +140,7 @@ export const ModalDetalhesConta: React.FC<ModalDetalhesContaProps> = ({
         {/* Lista de Parcelas Scrollável */}
         <div className="overflow-y-auto flex-1 py-3 space-y-2 pr-1">
           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-            {primeira.tipo_conta === 'recorrente' ? 'Lançamentos' : 'Todas as Parcelas'}
+            Todas as Parcelas
           </h4>
 
           {parcelas.map((p, idx) => {

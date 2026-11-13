@@ -16,8 +16,6 @@ import { BarraProgressoVencimento } from './BarraProgressoVencimento';
 import {
   obterContasComLembrete,
   alternarLembrete,
-  solicitarPermissaoNotificacao,
-  verificarPermissaoNotificacao,
   reagendarNotificacoes,
 } from '../utils/lembretes';
 
@@ -419,7 +417,7 @@ export const ListaMinhasDespesas: React.FC<ListaMinhasDespesasProps> = ({
   const handleToggleLembrete = (contaId: number, descricao: string) => {
     const ativo = alternarLembrete(contaId);
     setContasComLembrete(new Set(obterContasComLembrete()));
-    reagendarNotificacoes().catch(() => {});
+    reagendarNotificacoes(undefined, { forcarSolicitacaoPermissao: ativo }).catch(() => {});
     setToastLembrete(
       ativo
         ? `🔔 Lembrete de vencimento ativado para "${descricao}"`

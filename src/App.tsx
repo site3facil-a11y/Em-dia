@@ -61,13 +61,14 @@ import {
   verificarERepararParcelas,
   recalcularTotaisContas,
 } from './db/repository';
-import { getMesAnoAtual, dispararConfetes } from './utils/formatters';
+import { getMesAnoAtual, getHojeString, dispararConfetes } from './utils/formatters';
 import {
   obterParcelasLembreteHoje,
   reagendarNotificacoes,
   cancelarNotificacoesParcela,
   verificarNotificacaoResumoAtrasadas,
   inicializarOuvinteNotificacoes,
+  definirLembrete,
 } from './utils/lembretes';
 import { executarCopiaAutomaticaSemanalSeNecessario } from './utils/copiaAutomatica';
 import { CapacitorUpdater } from '@capgo/capacitor-updater';
@@ -208,14 +209,28 @@ export default function App() {
     }
   }, [splashConcluida, carregando, metricas]);
 
-  // Reagendamento ao voltar do segundo plano (appStateChange) ou tela visível (Item 3)
+  // Reagendamento ao voltar do segundo plano (appStateChange) ou tela visível
   useEffect(() => {
     let handleListener: any = null;
+    let ultimoDisparoMs = 0;
+
+    const aoRetomarApp = () => {
+      const agora = Date.now();
+      if (agora - ultimoDisparoMs < 400) return;
+      ultimoDisparoMs = agora;
+
+      try {
+        window.dispatchEvent(new CustomEvent('em-dia-app-retomado'));
+      } catch {}
+
+      reagendarNotificacoes().catch((err) => console.error('Erro ao reagendar ao retomar app:', err));
+    };
+
     try {
       if (Capacitor.isPluginAvailable('App')) {
         CapApp.addListener('appStateChange', (state) => {
           if (state.isActive) {
-            reagendarNotificacoes().catch((err) => console.error('Erro ao reagendar no appStateChange:', err));
+            aoRetomarApp();
           }
         }).then((h) => {
           handleListener = h;
@@ -227,7 +242,7 @@ export default function App() {
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        reagendarNotificacoes().catch((err) => console.error('Erro ao reagendar no visibilitychange:', err));
+        aoRetomarApp();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -275,15 +290,16 @@ export default function App() {
       try {
         if (!lembretesAberturaExibidosRef.current) {
           lembretesAberturaExibidosRef.current = true;
-          const todasPendentes = await listarParcelas({ status: 'pendente', mesAno: 'todos' });
-          await reagendarNotificacoes(todasPendentes).catch((err) => {
+          const todasParcelas = await listarParcelas({ status: 'todos', mesAno: 'todos' });
+          const todasNaoPagas = todasParcelas.filter((p) => p.status !== 'pago');
+          await reagendarNotificacoes(todasNaoPagas, { solicitarPermissaoSePrompt: true }).catch((err) => {
             console.error('Erro em segundo plano ao reagendar notificações:', err);
           });
-          await verificarNotificacaoResumoAtrasadas(todasPendentes).catch((err) => {
+          await verificarNotificacaoResumoAtrasadas(todasNaoPagas).catch((err) => {
             console.error('Erro em segundo plano ao verificar resumo de atrasadas:', err);
           });
 
-          const lembretes = obterParcelasLembreteHoje(todasPendentes);
+          const lembretes = obterParcelasLembreteHoje(todasNaoPagas);
           if (lembretes.length > 0) {
             setParcelasLembreteHoje(lembretes);
             setModalLembretesHojeAberto(true);
@@ -320,7 +336,7 @@ export default function App() {
   // Ações de Pagamento (Item 6: cancela as notificações da parcela ao marcar como paga e reagenda)
   const handlePagarParcelaRapido = async (parcela: Parcela) => {
     // Se for pagamento direto pelo círculo, quita na data de hoje e dispara confete
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = getHojeString();
     await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
     dispararConfetes();
     await cancelarNotificacoesParcela(parcela.id);
@@ -329,7 +345,7 @@ export default function App() {
   };
 
   const handlePagarParcelaLembrete = async (parcela: Parcela) => {
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = getHojeString();
     await marcarParcelaComoPaga(parcela.id, hoje, parcela.valor);
     dispararConfetes();
     await cancelarNotificacoesParcela(parcela.id);
@@ -406,9 +422,11 @@ export default function App() {
 
   const handleConfirmarExclusao = async () => {
     if (!exclusaoPendente) return;
-    await excluirConta(exclusaoPendente.contaId);
+    const contaIdExcluida = exclusaoPendente.contaId;
+    await excluirConta(contaIdExcluida);
+    definirLembrete(contaIdExcluida, false);
     setExclusaoPendente(null);
-    if (detalhesContaParcelas && detalhesContaParcelas[0]?.conta_id === exclusaoPendente.contaId) {
+    if (detalhesContaParcelas && detalhesContaParcelas[0]?.conta_id === contaIdExcluida) {
       setDetalhesContaParcelas(null);
     }
     await reagendarNotificacoes();
@@ -441,6 +459,7 @@ export default function App() {
       dadosRestauracao = await excluirParcelaIndividual(parcelaEmExclusao.id);
     } else {
       dadosRestauracao = await excluirContaInteiraTransacao(parcelaEmExclusao.conta_id);
+      definirLembrete(parcelaEmExclusao.conta_id, false);
     }
     setDadosDesfazer(dadosRestauracao);
     setSnackbarDesfazerAberto(true);
@@ -590,8 +609,9 @@ export default function App() {
                 totalCategorias={categorias.length}
                 onCriarPorquinho={() => setModalPorquinhoAberto(true)}
                 onAbrirLembretesHoje={() => {
-                  listarParcelas({ status: 'pendente', mesAno: 'todos' }).then((todasPendentes) => {
-                    const lembretes = obterParcelasLembreteHoje(todasPendentes);
+                  listarParcelas({ status: 'todos', mesAno: 'todos' }).then((todas) => {
+                    const naoPagas = todas.filter((p) => p.status !== 'pago');
+                    const lembretes = obterParcelasLembreteHoje(naoPagas);
                     setParcelasLembreteHoje(lembretes);
                     setModalLembretesHojeAberto(true);
                   });

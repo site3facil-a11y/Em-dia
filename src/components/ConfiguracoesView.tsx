@@ -39,7 +39,7 @@ import {
   recalcularTotaisContas,
   ResumoRecalculoTotais,
 } from '../db/repository';
-import { formatarMoeda } from '../utils/formatters';
+import { formatarMoeda, getHojeString } from '../utils/formatters';
 import { ModalAtualizacao, ReleaseInfo } from './ModalAtualizacao';
 import { ModalBase } from './ModalBase';
 import { compararVersoes } from '../utils/versao';
@@ -50,8 +50,12 @@ import {
   salvarConfiguracaoLembretes,
   ConfiguracaoLembretes,
   StatusPermissaoLembretes,
+  StatusAlarmeExato,
   verificarStatusPermissao,
   solicitarPermissaoLembretes,
+  verificarPermissaoAlarmeExato,
+  solicitarPermissaoAlarmeExato,
+  obterQtdNotificacoesAgendadas,
   dispararNotificacaoTeste,
   reagendarNotificacoes,
 } from '../utils/lembretes';
@@ -97,6 +101,8 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
   const [pluginNotificacoesDisponivel] = useState(() => isLocalNotificationsDisponivel());
   const [configLembretes, setConfigLembretes] = useState<ConfiguracaoLembretes>(() => obterConfiguracaoLembretes());
   const [statusPermissao, setStatusPermissao] = useState<StatusPermissaoLembretes>('prompt');
+  const [statusAlarmeExato, setStatusAlarmeExato] = useState<StatusAlarmeExato>('unsupported');
+  const [qtdNotificacoesAgendadas, setQtdNotificacoesAgendadas] = useState<number>(0);
   const [testandoNotificacao, setTestandoNotificacao] = useState(false);
   const [persistenciaAtiva, setPersistenciaAtiva] = useState<boolean | null>(null);
   const [modalRestaurarAberto, setModalRestaurarAberto] = useState(false);
@@ -154,11 +160,40 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     setTimeout(() => setMensagemSucesso(null), 4000);
   };
 
-  // Verifica status da permissão nativa de notificações
+  const atualizarDiagnosticoNotificacoes = async () => {
+    if (!pluginNotificacoesDisponivel) return;
+    const [perm, exato, agendadas] = await Promise.all([
+      verificarStatusPermissao(),
+      verificarPermissaoAlarmeExato(),
+      obterQtdNotificacoesAgendadas(),
+    ]);
+    setStatusPermissao(perm);
+    setStatusAlarmeExato(exato);
+    setQtdNotificacoesAgendadas(agendadas);
+  };
+
+  // Verifica status da permissão nativa, alarme exato e quantidade agendada
   useEffect(() => {
-    if (pluginNotificacoesDisponivel) {
-      verificarStatusPermissao().then(setStatusPermissao);
-    }
+    if (!pluginNotificacoesDisponivel) return;
+    atualizarDiagnosticoNotificacoes();
+
+    const aoRetomar = () => {
+      atualizarDiagnosticoNotificacoes();
+    };
+    const aoReagendar = (e: any) => {
+      if (typeof e?.detail?.totalAgendadas === 'number') {
+        setQtdNotificacoesAgendadas(e.detail.totalAgendadas);
+      } else {
+        obterQtdNotificacoesAgendadas().then(setQtdNotificacoesAgendadas);
+      }
+    };
+
+    window.addEventListener('em-dia-app-retomado', aoRetomar);
+    window.addEventListener('em-dia-notificacoes-reagendadas', aoReagendar);
+    return () => {
+      window.removeEventListener('em-dia-app-retomado', aoRetomar);
+      window.removeEventListener('em-dia-notificacoes-reagendadas', aoReagendar);
+    };
   }, [pluginNotificacoesDisponivel]);
 
   // Sincroniza configuração de lembretes
@@ -173,9 +208,43 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     };
   }, []);
 
+  // Solicitar permissão manualmente pelo botão no card
+  const handleSolicitarPermissaoManual = async () => {
+    if (!pluginNotificacoesDisponivel) return;
+    setErro(null);
+    const resultado = await solicitarPermissaoLembretes();
+    setStatusPermissao(resultado.status);
+    if (resultado.concedida) {
+      const novaConfig = { ...configLembretes, habilitado: true };
+      setConfigLembretes(novaConfig);
+      salvarConfiguracaoLembretes(novaConfig);
+      await reagendarNotificacoes();
+      await atualizarDiagnosticoNotificacoes();
+      notificarSucesso('Permissão concedida! Lembretes de vencimento ativados.');
+    } else {
+      setErro(
+        'Permissão de notificações negada. Caso o aviso não apareça mais, habilite em Configurações do Android > Aplicativos > Em Dia > Notificações.'
+      );
+    }
+  };
+
+  // Abrir tela de "Alarmes e lembretes" para horário exato (Android 12+)
+  const handleSolicitarAlarmeExato = async () => {
+    if (!pluginNotificacoesDisponivel) return;
+    setErro(null);
+    const novoStatus = await solicitarPermissaoAlarmeExato();
+    setStatusAlarmeExato(novoStatus);
+    if (novoStatus === 'granted') {
+      await reagendarNotificacoes();
+      await atualizarDiagnosticoNotificacoes();
+      notificarSucesso('Horário exato ativado! Os alertas serão disparados no minuto configurado.');
+    }
+  };
+
   // Ligar/Desligar Lembretes de Vencimento
   const handleToggleLembretesHabilitado = async () => {
     if (!pluginNotificacoesDisponivel) return;
+    setErro(null);
     const novoHabilitado = !configLembretes.habilitado;
 
     if (novoHabilitado) {
@@ -186,6 +255,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
         setConfigLembretes(novaConfig);
         salvarConfiguracaoLembretes(novaConfig);
         await reagendarNotificacoes();
+        await atualizarDiagnosticoNotificacoes();
         notificarSucesso('Lembretes de vencimento ativados com sucesso!');
       } else {
         const novaConfig = { ...configLembretes, habilitado: false };
@@ -198,16 +268,20 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       setConfigLembretes(novaConfig);
       salvarConfiguracaoLembretes(novaConfig);
       await reagendarNotificacoes();
+      await atualizarDiagnosticoNotificacoes();
       notificarSucesso('Lembretes de vencimento desativados.');
     }
   };
 
   // Alterar Horário do Lembrete
   const handleMudarHorario = (novoHorario: string) => {
+    if (!novoHorario) return;
     const novaConfig = { ...configLembretes, horario: novoHorario };
     setConfigLembretes(novaConfig);
     salvarConfiguracaoLembretes(novaConfig);
-    reagendarNotificacoes().catch(() => {});
+    reagendarNotificacoes()
+      .then(() => atualizarDiagnosticoNotificacoes())
+      .catch(() => {});
     notificarSucesso(`Horário do lembrete alterado para ${novoHorario}.`);
   };
 
@@ -234,17 +308,26 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
     };
     setConfigLembretes(novaConfig);
     salvarConfiguracaoLembretes(novaConfig);
-    reagendarNotificacoes().catch(() => {});
+    reagendarNotificacoes()
+      .then(() => atualizarDiagnosticoNotificacoes())
+      .catch(() => {});
   };
 
-  // Testar Notificação em 5 segundos
+  // Testar Notificação
   const handleTestarNotificacao = async () => {
     try {
       setTestandoNotificacao(true);
       setErro(null);
       const res = await dispararNotificacaoTeste();
+      await atualizarDiagnosticoNotificacoes();
       if (res.sucesso) {
-        notificarSucesso('Notificação de teste agendada para daqui a 5 segundos!');
+        if (res.imediata) {
+          notificarSucesso(
+            'Notificação de teste enviada agora! Para alertas no minuto exato com o app fechado, ative "Horário exato" abaixo.'
+          );
+        } else {
+          notificarSucesso('Notificação de teste agendada para daqui a 5 segundos!');
+        }
       } else {
         setErro(res.mensagem || 'Falha ao agendar teste de notificação.');
       }
@@ -418,7 +501,7 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
       setProcessando(true);
       setErro(null);
       const csvContent = await gerarCsvParcelas();
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = getHojeString();
       const fileName = `relatorio_contas_parcelas_${hoje}.csv`;
 
       await exportarOuCompartilharArquivo({
@@ -606,21 +689,63 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
             </label>
           </div>
 
-          {/* Status da Permissão */}
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <span className="text-slate-500 font-medium">Status da permissão:</span>
-            {statusPermissao === 'granted' ? (
-              <span className="font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                ✓ Concedida
-              </span>
-            ) : statusPermissao === 'denied' ? (
-              <span className="font-bold px-2.5 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                ✕ Negada
-              </span>
-            ) : (
-              <span className="font-bold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                Não solicitada
-              </span>
+          {/* Status da Permissão + Botão direto para autorizar */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-slate-500 font-medium">Permissão de notificações:</span>
+                {statusPermissao === 'granted' ? (
+                  <span className="font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                    ✓ Concedida
+                  </span>
+                ) : statusPermissao === 'denied' ? (
+                  <span className="font-bold px-2.5 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                    ✕ Negada
+                  </span>
+                ) : (
+                  <span className="font-bold px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                    Não solicitada
+                  </span>
+                )}
+              </div>
+
+              {statusPermissao !== 'granted' && (
+                <button
+                  type="button"
+                  onClick={handleSolicitarPermissaoManual}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] shadow-xs transition-all cursor-pointer"
+                >
+                  Permitir notificações
+                </button>
+              )}
+            </div>
+
+            {/* Status do Alarme Exato (Android 12+) */}
+            {statusAlarmeExato !== 'unsupported' && (
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-slate-500 font-medium">Horário exato (Alarmes):</span>
+                  {statusAlarmeExato === 'granted' ? (
+                    <span className="font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                      ✓ Ativo
+                    </span>
+                  ) : (
+                    <span className="font-bold px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      Aproximado (pode atrasar)
+                    </span>
+                  )}
+                </div>
+
+                {statusAlarmeExato !== 'granted' && (
+                  <button
+                    type="button"
+                    onClick={handleSolicitarAlarmeExato}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold text-[11px] shadow-xs transition-all cursor-pointer"
+                  >
+                    Ativar horário exato
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -706,21 +831,30 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                 </div>
               </div>
 
-              {/* Informação sobre o Sininho individual */}
-              <div className="flex items-center justify-between gap-2 pt-1 text-[11px] text-slate-500">
-                <span>
-                  {qtdLembretes > 0
-                    ? `${qtdLembretes} conta(s) com sininho 🔔 ativo.`
-                    : 'Sem sininho individual (todas as pendentes serão notificadas).'}
-                </span>
-                {onAbrirLembretesHoje && (
-                  <button
-                    type="button"
-                    onClick={onAbrirLembretesHoje}
-                    className="font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                  >
-                    Ver Lembretes do Dia
-                  </button>
+              {/* Informação sobre o Sininho individual e alertas armados */}
+              <div className="space-y-1 pt-1 text-[11px] text-slate-500">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span>
+                    {qtdLembretes > 0
+                      ? `${qtdLembretes} conta(s) com sininho 🔔 ativo.`
+                      : 'Sem sininho individual (todas as pendentes serão notificadas).'}
+                  </span>
+                  {onAbrirLembretesHoje && (
+                    <button
+                      type="button"
+                      onClick={onAbrirLembretesHoje}
+                      className="font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                    >
+                      Ver Lembretes do Dia
+                    </button>
+                  )}
+                </div>
+                {statusPermissao === 'granted' && (
+                  <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    {qtdNotificacoesAgendadas > 0
+                      ? `${qtdNotificacoesAgendadas} notificação(ões) agendada(s) no Android para os próximos 45 dias.`
+                      : 'Nenhuma notificação pendente agendada para os próximos 45 dias.'}
+                  </p>
                 )}
               </div>
 
@@ -733,20 +867,20 @@ export const ConfiguracoesView: React.FC<ConfiguracoesViewProps> = ({
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
                 >
                   <Bell className={`w-3.5 h-3.5 ${testandoNotificacao ? 'animate-bounce' : ''}`} />
-                  <span>{testandoNotificacao ? 'Agendando teste...' : 'Testar notificação'}</span>
+                  <span>{testandoNotificacao ? 'Enviando teste...' : 'Testar notificação'}</span>
                 </button>
               </div>
             </div>
           )}
 
-          {/* Aviso complementar dentro do app (Item 8) */}
+          {/* Aviso complementar dentro do app */}
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
             <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <span>💡</span>
-              <span>Avisos no sistema e no app</span>
+              <span>Avisos no sistema e economia de bateria</span>
             </p>
             <p className="leading-relaxed">
-              Além das notificações na barra de status do Android nos horários configurados, o aplicativo mantém uma janela de conferência rápida ao ser aberto para contas que vencem hoje ou estão em atraso.
+              Além das notificações do Android nos horários configurados, o app exibe um resumo ao ser aberto. Em aparelhos Xiaomi, Samsung ou Motorola, defina a bateria do <strong>Em Dia</strong> como <strong>Sem restrições</strong> nas configurações do Android para garantir o disparo com a tela bloqueada.
             </p>
           </div>
         </div>
